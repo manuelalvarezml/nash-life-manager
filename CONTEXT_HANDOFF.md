@@ -75,7 +75,7 @@ In short: **Python 3.11+** + `pip install -r requirements.txt`, **Node 20+** + `
 
 1. **Obsidian removed** — profile lives in SQLite + future Chroma, not a vault.
 2. **LangGraph over Deep Agents** — deterministic tools, local SQL, no alpha harness / cloud tracing dependency.
-3. **Multi-topic entries** — planned via **SemanticDecomposer** + **`semantic_units`** (not fully built); single transcript still stored as one diary row today.
+3. **Multi-topic entries** — handled via **SemanticDecomposer** + **`semantic_units`** retrieval; a single transcript is still stored as one diary row, but its sub-patterns now also get extracted into typed semantic units.
 4. **“Lo que Nash sabe” was empty** because domain **`profile_summaries`** were only filled by **manual `/api/profile/synthesize`** (or future background job), not by every chat. **Diary highlights** were added so the tab always reflects **saved voice/text diary rows**.
 5. **Duplicate diary rows**: voice path **always** inserts diary first; agent is instructed **not** to `log_diary_entry` again for that turn; migration **links** audio to existing row if same transcript and no `audio_path`.
 6. **Dev panel** is a **tab**, not a global shortcut (Chrome bookmark conflict).
@@ -142,7 +142,7 @@ nash_life_manager/
 ├── backend/agent/graph.py
 ├── backend/agent/prompts.py
 ├── backend/agent/profile_synthesize.py
-├── backend/agent/semantic_decomposer.py  # stub
+├── backend/agent/semantic_decomposer.py  # active semantic unit extraction
 ├── backend/audio/transcriber.py
 ├── backend/audio/brief_summary.py
 ├── backend/audio/ingest.py
