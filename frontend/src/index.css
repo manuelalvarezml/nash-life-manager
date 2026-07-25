@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+:root {
+  /* Vivid color palette */
+  --nash-bg: #f5f3f0;
+  --nash-surface: #ffffff;
+  --nash-surface-2: #ebe8e4;
+  --nash-surface-disabled: #d4d0ca;
+  --nash-border: #d1cdc7;
+  --nash-text: #1a1a1a;
+  --nash-text-muted: #5c5c5c;
+
+  /* Accent colors */
+  --nash-brick: #c45c3e;
+  --nash-brick-soft: #c45c3e20;
+  --nash-teal: #2a7c7c;
+  --nash-teal-soft: #2a7c7c20;
+  --nash-wine: #7a3e5d;
+  --nash-wine-soft: #7a3e5d20;
+  --nash-prussian: #1d3557;
+  --nash-prussian-soft: #1d355720;
+
+  /* Primary accent (brick orange) */
+  --nash-accent: var(--nash-brick);
+  --nash-accent-soft: var(--nash-brick-soft);
+
+  /* Status colors */
+  --nash-success: #2d8a5e;
+  --nash-warning: #b8860b;
+  --nash-error: #c9302c;
+}
+
+body {
+  margin: 0;
+  background: var(--nash-bg);
+  color: var(--nash-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}

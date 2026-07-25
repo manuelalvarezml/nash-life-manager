@@ -1,0 +1,16 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+data/audio/
+!data/audio/.gitignore
+
+frontend/node_modules/
+frontend/dist/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
