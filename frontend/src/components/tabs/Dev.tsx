@@ -90,7 +90,8 @@ export function Dev() {
   };
 
   useEffect(() => {
-    refresh();
+    const initialRefresh = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(initialRefresh);
   }, []);
 
   const implementedCount = debug?.implementation_status

@@ -1403,3 +1403,255 @@ export async function fetchFinanceSummary(month?: string): Promise<{
   const res = await fetch(`${API_BASE}/finance/summary${query}`);
   return res.json();
 }
+
+// =============================================
+// Calendar + structured memories
+// =============================================
+
+export type CalendarSourceKind = 'direct' | 'diary' | 'goal' | 'exercise' | 'nutrition' | 'finance' | 'system';
+export type CalendarItemStatus = 'planned' | 'completed' | 'skipped' | 'cancelled';
+
+export interface CalendarItem {
+  id: number;
+  series_id?: number | null;
+  title: string;
+  description?: string | null;
+  item_type: 'event' | 'task' | 'focus' | 'routine' | 'reminder';
+  start_at?: string | null;
+  end_at?: string | null;
+  due_at?: string | null;
+  all_day: number;
+  status: CalendarItemStatus;
+  source_kind: CalendarSourceKind | string;
+  source_id?: number | null;
+  source_key?: string | null;
+  goal_id?: number | null;
+  domain_code?: string | null;
+  priority: number;
+  flexibility: 'fixed' | 'movable' | 'free';
+  energy_required?: number | null;
+  location?: string | null;
+  rationale?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CalendarRecurrence {
+  frequency: 'daily' | 'weekly' | 'monthly';
+  interval?: number;
+  days_of_week?: number[];
+  times_per_week?: number | null;
+  day_of_month?: number | null;
+  until?: string | null;
+}
+
+export interface CalendarSeries {
+  id: number;
+  title: string;
+  description?: string | null;
+  recurrence: CalendarRecurrence;
+  preferred_time?: string | null;
+  duration_min: number;
+  first_date: string;
+  until_date?: string | null;
+  source_kind: string;
+  priority: number;
+  flexibility: 'fixed' | 'movable' | 'free';
+  active: number;
+}
+
+export interface CalendarSuggestion {
+  id: number;
+  status: 'pending' | 'approved' | 'rejected';
+  proposal_type: 'create_item' | 'create_series' | 'update_item' | 'rearrange';
+  source_kind: string;
+  source_id?: number | null;
+  title: string;
+  description?: string | null;
+  proposed_start_at?: string | null;
+  proposed_end_at?: string | null;
+  due_at?: string | null;
+  duration_min?: number | null;
+  item_type: CalendarItem['item_type'];
+  recurrence?: CalendarRecurrence | null;
+  goal_id?: number | null;
+  priority: number;
+  flexibility: CalendarItem['flexibility'];
+  location?: string | null;
+  confidence?: number | null;
+  rationale?: string | null;
+  payload?: Record<string, unknown>;
+}
+
+export interface SchedulePreferences {
+  id: number;
+  timezone: string;
+  day_start_time: string;
+  day_end_time: string;
+  focus_window_start?: string | null;
+  focus_window_end?: string | null;
+  default_task_duration_min: number;
+  transition_buffer_min: number;
+  max_scheduled_min_per_day: number;
+  preferred_work_days: number[];
+  protected_windows: Array<Record<string, unknown>>;
+  notes?: string | null;
+}
+
+export interface CalendarDashboard {
+  week_start: string;
+  week_end: string;
+  today: string;
+  items: CalendarItem[];
+  unscheduled: CalendarItem[];
+  suggestions: CalendarSuggestion[];
+  preferences: SchedulePreferences;
+  series: CalendarSeries[];
+  health: {
+    minutes_by_day: Record<string, number>;
+    overloaded_days: string[];
+    source_counts: Record<string, number>;
+    goal_aligned_count: number;
+    planned_count: number;
+    conflict_item_ids: number[];
+  };
+}
+
+export interface CalendarInputResult {
+  ok: boolean;
+  error?: string;
+  transcript?: string;
+  status?: 'processed' | 'needs_review';
+  message?: string;
+  item?: CalendarItem;
+  series?: CalendarSeries;
+  candidates?: CalendarItem[];
+  changed_count?: number;
+}
+
+export async function fetchCalendarDashboard(weekStart?: string): Promise<CalendarDashboard> {
+  const params = new URLSearchParams();
+  if (weekStart) params.set('week_start', weekStart);
+  const response = await fetch(`${API_BASE}/calendar/dashboard${params.size ? `?${params}` : ''}`);
+  if (!response.ok) throw new Error('No se pudo cargar la agenda');
+  return response.json();
+}
+
+export async function submitCalendarInput(input: {
+  text?: string;
+  audio?: Blob;
+}): Promise<CalendarInputResult> {
+  const formData = new FormData();
+  if (input.text?.trim()) formData.append('text', input.text.trim());
+  if (input.audio) formData.append('audio', input.audio, 'calendar-recording.webm');
+  const response = await fetch(`${API_BASE}/calendar/input`, { method: 'POST', body: formData });
+  if (!response.ok) throw new Error('No se pudo procesar la instruccion');
+  return response.json();
+}
+
+export async function patchCalendarItem(
+  itemId: number,
+  updates: Partial<CalendarItem> & { reason?: string },
+): Promise<{ ok: boolean; item?: CalendarItem; error?: string }> {
+  const response = await fetch(`${API_BASE}/calendar/items/${itemId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return response.json();
+}
+
+export async function approveCalendarSuggestion(
+  suggestionId: number,
+  edits: Partial<CalendarSuggestion> & { first_date?: string; preferred_time?: string } = {},
+): Promise<{ ok: boolean; item?: CalendarItem; series?: CalendarSeries; error?: string }> {
+  const response = await fetch(`${API_BASE}/calendar/suggestions/${suggestionId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(edits),
+  });
+  return response.json();
+}
+
+export async function dismissCalendarSuggestion(
+  suggestionId: number,
+): Promise<{ ok: boolean; error?: string }> {
+  const response = await fetch(`${API_BASE}/calendar/suggestions/${suggestionId}`, { method: 'DELETE' });
+  return response.json();
+}
+
+export async function syncCalendarEngines(): Promise<{ ok: boolean; sources: Record<string, number> }> {
+  const response = await fetch(`${API_BASE}/calendar/sync`, { method: 'POST' });
+  return response.json();
+}
+
+export async function updateSchedulePreferences(
+  updates: Partial<SchedulePreferences>,
+): Promise<{ ok: boolean; preferences: SchedulePreferences }> {
+  const response = await fetch(`${API_BASE}/calendar/preferences`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return response.json();
+}
+
+export interface StructuredMemory {
+  id: number;
+  timestamp: string;
+  title?: string | null;
+  topic: string;
+  raw_transcript: string;
+  life_period?: 'childhood' | 'adolescence' | 'youth' | 'present' | 'unspecified';
+  diary_entry_id?: number | null;
+  semantic_unit_id?: number | null;
+  occurred_year_start?: number | null;
+  occurred_year_end?: number | null;
+  age_start?: number | null;
+  age_end?: number | null;
+  place_name?: string | null;
+  people: string[];
+  themes: string[];
+  emotional_valence?: string | null;
+  memory_type?: string | null;
+  significance?: number | null;
+  sensory_details?: string | null;
+  confidence?: number | null;
+  user_verified: number;
+  notes?: string | null;
+}
+
+export async function fetchMemories(search?: string): Promise<{ memories: StructuredMemory[] }> {
+  const params = new URLSearchParams();
+  if (search?.trim()) params.set('search', search.trim());
+  const response = await fetch(`${API_BASE}/memories${params.size ? `?${params}` : ''}`);
+  if (!response.ok) throw new Error('No se pudieron cargar los recuerdos');
+  return response.json();
+}
+
+export async function createMemory(
+  memory: Partial<StructuredMemory>,
+): Promise<{ ok: boolean; memory?: StructuredMemory; error?: string }> {
+  const response = await fetch(`${API_BASE}/memories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(memory),
+  });
+  return response.json();
+}
+
+export async function patchMemory(
+  memoryId: number,
+  updates: Partial<StructuredMemory>,
+): Promise<{ ok: boolean; memory?: StructuredMemory; error?: string }> {
+  const response = await fetch(`${API_BASE}/memories/${memoryId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return response.json();
+}
+
+export async function deleteMemory(memoryId: number): Promise<{ ok: boolean }> {
+  const response = await fetch(`${API_BASE}/memories/${memoryId}`, { method: 'DELETE' });
+  return response.json();
+}

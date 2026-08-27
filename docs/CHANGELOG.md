@@ -5,6 +5,92 @@
 
 ---
 
+## 2026-08-27: Calendar Engine V1 + Structured Diary Memories
+
+### Problem Statement
+
+Nash could hold goals, workouts, expenses, diary entries, and semantic fragments, but it still
+could not turn them into a realistic schedule. The old plan described `time_blocks`, yet there was
+no calendar UI, recurring activity engine, rearrangement path, or consent boundary for actions
+detected inside the diary. Memories were mostly prose without the chronological fields needed for
+retrieval and later pattern analysis.
+
+### What Changed
+
+- Added a canonical calendar architecture with separate tables for:
+  - direct voice/text instructions and their interpretation audit;
+  - pending suggestions;
+  - accepted calendar occurrences;
+  - recurring series;
+  - preferences/capacity limits;
+  - item change history.
+- Added `backend/calendar_engine.py` and `backend/db/calendar.py`:
+  - natural-language command interpretation using the shared OpenAI/privacy gateway;
+  - deterministic free-slot selection and recurrence expansion;
+  - fixed vs movable commitment protection;
+  - day/week/source-level replanning;
+  - conflict detection and unscheduled fallback;
+  - approval/rejection workflow;
+  - standardized adapters for Goals, Cuerpo, Dinero, and diary actions.
+- Added the `Agenda` tab:
+  - direct audio or text command box;
+  - seven-day view;
+  - suggestion inbox with approve, edit, and delete;
+  - source labels, completion controls, time editing, conflict flags, and realistic day limits;
+  - navigation badge showing pending decisions.
+- Upgraded diary decomposition:
+  - new `action_item` type distinct from vague intentions;
+  - richer action metadata (date/time/duration/recurrence/priority/flexibility);
+  - richer memory metadata (age/year ranges, place, people, themes, emotion, type,
+    significance, sensory detail, confidence);
+  - deterministic relative-date fallback when the model omits words such as "tomorrow."
+- Expanded `memories` and added the `Recuerdos` tab:
+  - chronological present-to-past archive;
+  - search and detailed edit flow;
+  - local age-to-year range calculation from birth date;
+  - manual verification state;
+  - migration/backfill from existing memory semantic units.
+- Added Nash tools for explicit schedule commands, upcoming schedule lookup, and memory search.
+- Added accepted calendar commitments to Nash's live context while clearly labeling unapproved
+  suggestions as non-commitments.
+- Removed the owner's real name from remote tool descriptions, closing a privacy leak outside the
+  normal message-sanitization path.
+
+### Decisions Recorded
+
+- Diary actions require approval; direct calendar mandates apply immediately.
+- The LLM interprets language, while deterministic code owns time arithmetic, capacity, recurrence,
+  and the fixed/movable safety boundary.
+- Explicit time conflicts remain visible rather than silently changing what the user said.
+- Engine contributions create suggestions rather than taking ownership of the user's time.
+- Recurrence rules and concrete occurrences are separate so one session can be completed or skipped
+  without corrupting the underlying routine.
+
+### Risks and Hypotheses
+
+- The suggestion inbox may become noisy; real use should determine whether source-specific batching
+  or a daily review window is needed.
+- Approved series do not yet auto-mutate when the source engine changes. Future changes should be
+  proposed visibly.
+- Estimated task duration needs calibration from actual completion history.
+- External Google/Apple calendar synchronization remains intentionally deferred until privacy,
+  conflict ownership, and write authority are designed.
+
+### Validation
+
+- Backed up the local database before migration to
+  `~/.nash/nash-before-calendar-2026-08-27.db`.
+- Backend compile passed.
+- Frontend production build passed.
+- Real OpenAI schedule interpretation passed with local timezone/date resolution.
+- Diary memory/action split, suggestion approval, recurring idempotency, API routes, memory backfill,
+  and goal/workout/finance adapters passed smoke tests.
+
+### Detailed Record
+
+See `docs/calendar_memory_engine.md` for the data model, rejected alternatives, hypotheses, and
+future paths.
+
 ## 2026-08-27: Workout Engine v2 - Adherence-First Hypertrophy, Measurements, and Agent Integration
 
 ### Problem Statement

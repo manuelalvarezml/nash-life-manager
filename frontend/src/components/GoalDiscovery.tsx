@@ -362,7 +362,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
       const graph = await fetchGoalsGraph('all');
       setSavedGoals(graph.nodes || []);
       setGraphEdges(graph.edges || []);
-    } catch (e) {
+    } catch {
       setError('No se pudo cargar el grafo de metas.');
     } finally {
       setGraphLoading(false);
@@ -407,7 +407,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
         } else {
           setError(sessionResult.error || 'Error starting session');
         }
-      } catch (e) {
+      } catch {
         setError('Error connecting to server');
       } finally {
         setLoading(false);
@@ -433,7 +433,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
       } else {
         setError(result.error || 'Error sending message');
       }
-    } catch (e) {
+    } catch {
       setError('Error communicating with Nash');
     } finally {
       setSending(false);
@@ -473,7 +473,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start();
       setIsRecording(true);
-    } catch (e) {
+    } catch {
       setError('No se pudo acceder al microfono');
     }
   };
@@ -563,7 +563,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
       } else {
         setError(result.error || 'Error saving goal');
       }
-    } catch (e) {
+    } catch {
       setError('Error saving goal');
     } finally {
       setSavingGoalId(null);
@@ -698,7 +698,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
     try {
       await endGoalDiscovery(session.id);
       onClose();
-    } catch (e) {
+    } catch {
       setError('Error ending session');
     }
   };
@@ -1096,7 +1096,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
         await loadGraph();
         onGoalSaved();
       }
-    } catch (e) {
+    } catch {
       setError('Error actualizando la jerarquía de esta meta.');
     } finally {
       setUpdatingParent(false);
@@ -1124,7 +1124,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
         await loadGraph();
         setSelectedEdgeId(null);
       }
-    } catch (e) {
+    } catch {
       setError('Error creando relación entre metas.');
     } finally {
       setSavingRelation(false);
@@ -1141,7 +1141,7 @@ export function GoalDiscovery({ domains, onClose, onGoalSaved }: GoalDiscoveryPr
         await loadGraph();
         setSelectedEdgeId(null);
       }
-    } catch (e) {
+    } catch {
       setError('Error eliminando la relación.');
     }
   };

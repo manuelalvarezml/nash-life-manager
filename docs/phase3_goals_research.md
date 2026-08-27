@@ -3,6 +3,12 @@
 > **Date:** April 2026
 > **Purpose:** Research foundation for Nash's goal management system — covering goal hierarchy theory, self-concordance, implementation intentions, time blocking, and intelligent calendar scheduling.
 
+> **Implementation update (August 27, 2026):** Calendar Engine V1 is shipped. The original
+> `time_blocks` concept evolved into separate input, suggestion, recurrence, occurrence, and history
+> tables. This preserves provenance and creates an explicit consent boundary for diary/engine
+> contributions. See `docs/calendar_memory_engine.md` for the implemented architecture and open
+> hypotheses.
+
 ---
 
 ## Core Problem to Solve

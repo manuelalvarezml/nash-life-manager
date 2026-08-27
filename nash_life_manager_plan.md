@@ -21,6 +21,9 @@ todos:
   - id: phase2-memory
     content: "Phase 2: SemanticDecomposer, semantic_units table, Chroma ingestion with nomic-embed-text, retrieval in agent context"
     status: completed
+  - id: phase2-structured-memory-archive
+    content: "Phase 2: Structured Memory Archive — diary memory classification, age/year ranges, searchable Recuerdos tab, editable metadata"
+    status: completed
   - id: phase2-synth
     content: "Phase 2: ProfileSynthesizer auto-trigger (every 5 entries) + enhanced Dev tab with implementation status"
     status: completed
@@ -52,8 +55,11 @@ todos:
     content: "Phase 3d: Implementation Intentions — if-then planning"
     status: pending
   - id: phase3e-goals-timeblocks
-    content: "Phase 3e: Time Blocking — calendar view, block creation"
-    status: pending
+    content: "Phase 3e: Time Blocking — Agenda week view, direct voice/text commands, recurring series, history, and block editing"
+    status: completed
+  - id: phase3f-calendar-intelligence-v1
+    content: "Phase 3f (V1): Calendar intelligence — suggestion consent layer, diary actions, goal/workout/finance adapters, conflict detection, and safe replanning"
+    status: completed
   - id: phase4-self-profile-research
     content: "Phase 4: Self Profile Facts — deep research (McAdams, Schwartz, ACEs, biopsychosocial)"
     status: completed
@@ -76,7 +82,7 @@ todos:
     content: "Phase 5: Workout engine (V2) — adherence-first plan generator, fallback rescue session, measurement protocol, PRs, equipment inventory, and agent-context integration"
     status: completed
   - id: phase5-body-iteration
-    content: "Phase 5: Body iteration — nutrition audio parsing/estimation, calendar coordination, and deeper cross-engine adaptation between workouts, nutrition, and daily-entry patterns"
+    content: "Phase 5: Body iteration — nutrition audio parsing/estimation and deeper readiness adaptation between workouts, nutrition, schedule, and daily-entry patterns"
     status: pending
   - id: phase6-finance
     content: "Phase 6: Finance (V1) — finance tab, discovery, expense logging, monthly summary"
@@ -118,22 +124,23 @@ isProject: true
 - **Finance priority:** The financial engine is now the highest-value module after daily entries. Nash's core agent context now includes income, debt snapshot, fixed expenses, recent expenses, and monthly category totals so advice can connect money patterns with emotional patterns.
 - **Next finance step:** ingest monthly **credit card / loan PDFs**, group spending automatically, extract interest rates and debt structure, and compare repayment options (card payoff, loan refinance, asset sale such as the camera, etc.).
 - **Workout engine reset (Aug 27, 2026):** the Body module now uses an **adherence-first hypertrophy engine**. Nash generates a primary session plus a rescue fallback, tracks PRs and repeated body measurements, and avoids the old trap of treating "minimum" as failure.
+- **Calendar + memory engine (Aug 27, 2026):** Nash now has a local weekly agenda with voice/text commands, recurring series, safe replanning, and an approval inbox for actions contributed by diary entries, goals, workouts, and bills. Diary speech also feeds a searchable, editable autobiographical memory archive.
 
-## Current implementation (Jul 2026)
+## Current implementation (Aug 2026)
 
 | Area | Status |
 |------|--------|
-| **SQLite** | `~/.nash/nash.db` — diary (+nash_response), memories, profile_summaries, profile_facts, insights, **semantic_units**, **asked_questions**, **daily_question_answers**, **self_profile_facts**, **diary_conversations**, **life_domains**, **domain_ratings**, **goals** (with discovery fields + `parent_goal_id`), **goal_relations**, **goal_discovery_sessions** |
+| **SQLite** | `~/.nash/nash.db` — diary, structured memories, semantic/profile knowledge, goals graph, body/finance data, **schedule_inputs**, **calendar_suggestions**, **calendar_series**, **calendar_items**, **calendar_item_history**, and **schedule_preferences** |
 | **LangGraph checkpoints** | `~/.nash/checkpoints.db` (separate from app DB) |
 | **Audio files** | `nash_life_manager/data/audio/` (`YYYYMMDD_HHMMSS_{type}.webm`), legacy copy from `~/.nash/audio/` on startup |
 | **Transcription** | NVIDIA Parakeet from local path (`~/.nash/models/parakeet-tdt-0.6b-v3`) with auto backend selection (NeMo for TDT models; Transformers for compatible CTC models). NeMo long-audio chunking uses 120s chunks and rewinds to word `-15` from the previous chunk when word timestamps are available. |
 | **After each voice upload** | Save audio → transcribe → **brief Spanish summary** → **insert diary row** → **semantic decomposition** → agent reply → **save Nash response to diary** |
-| **Semantic Decomposition** | Extracts typed units (memory, pattern, feeling, etc.) from transcripts, stores in SQLite + **local Chroma embeddings** |
-| **Frontend** | Tabs: Inicio, Historial, **Lo que Nash sabe**, **Sobre Mi**, **Metas**, **Cuerpo**, **Dinero**, Trabajo…, **Dev**. Vite proxies `/api` and `/media`. |
+| **Semantic Decomposition** | Extracts typed units (memory, **action item**, pattern, feeling, etc.) from transcripts, stores in SQLite + local Chroma, promotes memories to the archive, and sends actions to the calendar suggestion inbox |
+| **Frontend** | Tabs: Inicio, Historial, **Recuerdos**, **Lo que Nash sabe**, **Sobre Mi**, **Metas**, **Agenda**, **Cuerpo**, **Dinero**, Trabajo…, **Dev**. Vite proxies `/api` and `/media`. |
 | **Home layout** | Top navigation bar (always visible), toggleable questions panel (40% right column), large mic button |
 | **Historial** | Lists diary rows with summary, transcript snippet, optional audio player, **duration badge**, **expandable Nash response**, **regenerate responses button** |
 | **Lo que Nash sabe** | Domain summaries (`profile_summaries`), facts (`log_profile_fact`), memories (`log_memory`), and **Regenerar resumenes** (synthesis from recent diaries) |
-| **Agent Context** | **Self-profile biographical data** + **finance snapshot** (income, debts, fixed expenses, monthly spend, recent movements) + profile summaries + facts + **top-5 relevant semantic units** from Chroma retrieval |
+| **Agent Context** | Self-profile + finance + workout/body + **accepted upcoming commitments** + pending-suggestion count + profile summaries/facts + top-5 relevant semantic units |
 | **Profile Synthesis** | **Auto-triggers every 5 diary entries** (background job) + manual "Regenerar resumenes" button |
 | **QuestionEngine** | Daily generation endpoint works; parser normalized model outputs. **Research completed** for improved question types (see `docs/question_engine_improved_research.md`). |
 | **Dev Tab** | Implementation status checklist, stats grid, color-coded facts, progress bar |
@@ -141,11 +148,13 @@ isProject: true
 | **UI Theme** | Vivid light palette: brick orange, teal, wine purple, prussian blue |
 | **Metas Tab** | Wheel of Life domains (8), domain rating modal, goals list with filters, create/update/delete goals, progress tracking, self-concordance fields, **Goal Discovery** (conversation + floating graph + relation editing), hierarchy (`parent_goal_id`) + explicit relation edges |
 | **Cuerpo + Dinero** | Nutrition tracking plus **Workout Engine V2** (adherence-first primary/fallback sessions, equipment inventory, measurements, PRs, set logging) and Finance V1 (discovery, expenses, monthly summary) |
+| **Agenda** | Direct voice/text commands, week view, recurring series, suggestion approval/edit/delete, goal/workout/finance/diary ingestion, realistic capacity, conflict flags, completion, and safe replanning |
+| **Recuerdos** | Searchable present-to-past autobiographical archive with age/year ranges, place, people, themes, emotion, significance, sensory detail, confidence, and manual verification |
 
 ### When does "Lo que Nash sabe" fill in?
 
 1. **Hechos** — When the agent calls `log_profile_fact` during chat (your explicit traits/patterns).
-2. **Memorias** — When the agent calls `log_memory`.
+2. **Memorias** — When the diary classifier detects a memory, when the agent calls `log_memory` in text chat, or when you add one manually. Structured fields are visible in **Recuerdos**.
 3. **Resumenes por dominio** — Empty until you run **Regenerar resumenes** (calls the configured LLM provider on recent diary text) or until background synthesis refreshes them automatically.
 
 ## Language (updated)
@@ -268,6 +277,24 @@ isProject: true
 - `goals` table with horizon, status, progress, motivation_type, why_matters
 - 9 API endpoints for domains and goals CRUD
 - Metas tab with domain grid, rating modal, goals list, create/edit goals
+
+### Phase 3e/3f update - Calendar Engine V1 (Aug 27, 2026)
+
+**Shipped:**
+- weekly Agenda view with direct text and locally transcribed audio commands
+- canonical split between raw instructions, pending suggestions, recurring rules, and accepted occurrences
+- approve/edit/delete inbox for diary actions and engine contributions
+- deterministic scheduling inside configurable day/capacity limits
+- fixed vs movable protection, conflict visibility, recurrence expansion, and day/week/source replanning
+- goal, workout, and fixed-expense adapters
+- accepted schedule injection into Nash's reasoning context
+- standardized agent tools for explicit schedule changes and upcoming-commitment lookup
+
+**Important design boundary:** diary actions and engine contributions are suggestions, not commitments.
+Direct schedule mandates apply immediately. This keeps Nash useful without giving it silent authority
+over the user's time.
+
+**Detailed decisions and open hypotheses:** `docs/calendar_memory_engine.md`.
 
 ---
 
@@ -484,6 +511,12 @@ CREATE TABLE IF NOT EXISTS intention_logs (
 #### Phase 3e: Time Blocking
 
 **Objective:** Schedule dedicated time slots for goal work, protected in calendar.
+
+> **V1 shipped Aug 27, 2026.** The implementation deliberately evolved beyond the original single
+> `time_blocks` proposal. The canonical model now uses `schedule_inputs`, `calendar_suggestions`,
+> `calendar_series`, `calendar_items`, and `calendar_item_history` so provenance, consent,
+> recurrence, and change history remain separate. The schema below is retained as historical design
+> context; see `docs/calendar_memory_engine.md` for the implemented model.
 
 **Database Changes:**
 

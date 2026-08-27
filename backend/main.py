@@ -15,6 +15,18 @@ from langchain_core.messages import HumanMessage
 
 from backend.config import AUDIO_DIR, ensure_dirs
 from backend.exercise_engine import build_exercise_dashboard, generate_workout_plan
+from backend.calendar_engine import (
+    approve_calendar_suggestion,
+    build_calendar_dashboard,
+    process_schedule_input,
+    reject_calendar_suggestion,
+    sync_engine_suggestions,
+)
+from backend.db.calendar import (
+    get_schedule_preferences,
+    update_calendar_item,
+    update_schedule_preferences,
+)
 from backend.db.schema import (
     apply_profile_summary_updates,
     init_db_sync,
@@ -70,6 +82,10 @@ from backend.db.schema import (
     insert_workout_session,
     get_workout_sessions,
     get_personal_records,
+    get_memories,
+    insert_structured_memory,
+    update_memory,
+    delete_memory,
     get_finance_profile,
     upsert_finance_profile,
     get_expense_categories,
@@ -261,7 +277,8 @@ async def upload_audio(
     agent_transcript = (
         f"{transcript}\n\n[Nota del sistema: esta grabación de voz ya fue guardada en el diario "
         f"(#{entry_id}) con resumen breve. No uses log_diary_entry para este mismo contenido; "
-        "sí puedes usar log_memory o log_profile_fact si aplica.]"
+        "el clasificador semántico ya guardó recuerdos y sugerencias de agenda detectadas, así que no uses "
+        "log_memory ni apply_schedule_instruction para repetirlas. Sí puedes usar log_profile_fact si aplica.]"
     )
 
     async def generate():
@@ -424,8 +441,8 @@ async def profile_synthesize():
     return await asyncio.to_thread(run)
 
 
-@app.get("/api/memories")
-async def list_memories(limit: int = 20):
+@app.get("/api/profile/memories-legacy")
+async def list_memories_legacy(limit: int = 20):
     db = await get_db()
     rows = await db.execute_fetchall(
         "SELECT * FROM memories ORDER BY timestamp DESC LIMIT ?", (limit,)
@@ -488,13 +505,16 @@ async def debug_last():
             "self_profile_facts": True,
             "goals_domains": True,  # Phase 3a
             "goals_basic": True,    # Phase 3a
-            "goals_hierarchy": False,  # Phase 3b
+            "goals_hierarchy": True,  # Phase 3b graph V1
             "goals_okrs": False,    # Phase 3b
             "goals_intentions": False,  # Phase 3d
-            "goals_time_blocks": False,  # Phase 3e
+            "goals_time_blocks": True,  # Calendar engine V1
+            "calendar_suggestion_inbox": True,
+            "calendar_voice_commands": True,
+            "structured_memory_archive": True,
             "work_module": False,
-            "body_module": False,
-            "finance_module": False,
+            "body_module": True,
+            "finance_module": True,
         },
     }
 
@@ -799,6 +819,131 @@ async def get_self_profile_sections():
     return {
         "sections": SELF_PROFILE_SECTIONS,
     }
+
+
+# =============================================
+# Calendar + structured memories API
+# =============================================
+
+@app.get("/api/calendar/dashboard")
+async def calendar_dashboard(week_start: str = None):
+    try:
+        return await asyncio.to_thread(build_calendar_dashboard, week_start)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/calendar/input")
+async def calendar_input(
+    text: str = Form(""),
+    audio: UploadFile = File(None),
+):
+    """Interpret and execute a direct schedule command from text or local transcription."""
+    from backend.audio.ingest import audio_rel_path
+    from backend.audio.transcriber import save_audio, transcribe
+
+    instruction = (text or "").strip()
+    audio_path_rel = None
+    input_mode = "text"
+    if audio and audio.filename:
+        audio_bytes = await audio.read()
+        suffix = "." + (audio.filename or "audio.webm").split(".")[-1]
+        audio_path = await asyncio.to_thread(save_audio, audio_bytes, "calendar", suffix)
+        result = await asyncio.to_thread(transcribe, audio_path)
+        transcript = (result.get("text") or "").strip()
+        if transcript:
+            instruction = f"{instruction}\n{transcript}".strip()
+        audio_path_rel = audio_rel_path(Path(audio_path).name)
+        input_mode = "audio"
+    if not instruction:
+        return {"ok": False, "error": "Se requiere audio o texto."}
+    try:
+        result = await asyncio.to_thread(
+            process_schedule_input,
+            instruction,
+            input_mode=input_mode,
+            audio_path=audio_path_rel,
+        )
+        return {"ok": True, "transcript": instruction, **result}
+    except Exception as exc:
+        log.error("calendar_input_failed", error=str(exc))
+        return {"ok": False, "error": str(exc), "transcript": instruction}
+
+
+@app.patch("/api/calendar/items/{item_id}")
+async def patch_calendar_item(item_id: int, body: dict):
+    item = await asyncio.to_thread(
+        update_calendar_item,
+        item_id,
+        body,
+        reason=body.get("reason") or "Edicion manual desde Agenda.",
+    )
+    if not item:
+        return {"ok": False, "error": "Actividad no encontrada."}
+    return {"ok": True, "item": item}
+
+
+@app.post("/api/calendar/suggestions/{suggestion_id}/approve")
+async def approve_schedule_suggestion(suggestion_id: int, body: dict = None):
+    try:
+        result = await asyncio.to_thread(approve_calendar_suggestion, suggestion_id, body or {})
+        return {"ok": True, **result}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.delete("/api/calendar/suggestions/{suggestion_id}")
+async def dismiss_schedule_suggestion(suggestion_id: int):
+    try:
+        suggestion = await asyncio.to_thread(reject_calendar_suggestion, suggestion_id)
+        return {"ok": True, "suggestion": suggestion}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/calendar/sync")
+async def sync_calendar_engines():
+    counts = await asyncio.to_thread(sync_engine_suggestions)
+    return {"ok": True, "sources": counts}
+
+
+@app.get("/api/calendar/preferences")
+async def calendar_preferences():
+    return {"preferences": await asyncio.to_thread(get_schedule_preferences)}
+
+
+@app.patch("/api/calendar/preferences")
+async def patch_calendar_preferences(body: dict):
+    preferences = await asyncio.to_thread(update_schedule_preferences, body)
+    return {"ok": True, "preferences": preferences}
+
+
+@app.get("/api/memories")
+async def list_memories(limit: int = 500, search: str = None):
+    memories = await asyncio.to_thread(get_memories, limit, search)
+    return {"memories": memories}
+
+
+@app.post("/api/memories")
+async def create_memory(body: dict):
+    if not str(body.get("title") or body.get("raw_transcript") or "").strip():
+        return {"ok": False, "error": "El recuerdo necesita un titulo o contenido."}
+    memory = await asyncio.to_thread(insert_structured_memory, body)
+    return {"ok": True, "memory": memory}
+
+
+@app.patch("/api/memories/{memory_id}")
+async def patch_memory(memory_id: int, body: dict):
+    memory = await asyncio.to_thread(update_memory, memory_id, body)
+    if not memory:
+        return {"ok": False, "error": "Recuerdo no encontrado o sin cambios validos."}
+    return {"ok": True, "memory": memory}
+
+
+@app.delete("/api/memories/{memory_id}")
+async def remove_memory(memory_id: int):
+    deleted = await asyncio.to_thread(delete_memory, memory_id)
+    return {"ok": deleted}
 
 
 # =============================================

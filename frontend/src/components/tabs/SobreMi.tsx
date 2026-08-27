@@ -284,7 +284,8 @@ export function SobreMi() {
   };
 
   useEffect(() => {
-    loadProfile();
+    const initialLoad = window.setTimeout(() => void loadProfile(), 0);
+    return () => window.clearTimeout(initialLoad);
   }, []);
 
   const handleFieldChange = (field: string, value: string | number | null) => {

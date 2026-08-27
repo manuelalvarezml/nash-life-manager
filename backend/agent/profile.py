@@ -15,6 +15,7 @@ from backend.db.schema import (
     get_workout_sessions,
 )
 from backend.db.chroma import query_semantic_units
+from backend.db.calendar import get_calendar_suggestions, get_upcoming_calendar_items
 from backend.exercise_engine import generate_workout_plan
 from backend.llm import build_literal_replacements, sanitize_text_for_remote_llm
 
@@ -441,6 +442,43 @@ def _build_exercise_context(
     return "\n  ".join(parts)
 
 
+def _build_calendar_context(
+    *,
+    redact_identity: bool = False,
+    replacements: list[tuple[str, str]] | None = None,
+) -> str | None:
+    try:
+        upcoming = get_upcoming_calendar_items(days=7, limit=16)
+        pending = get_calendar_suggestions("pending", limit=30)
+    except Exception as exc:
+        log.warning("calendar_context_unavailable", error=str(exc))
+        return None
+    if not upcoming and not pending:
+        return None
+    parts = [
+        f"Proximos 7 dias: {len(upcoming)} compromisos aceptados. Sugerencias pendientes: {len(pending)}."
+    ]
+    for item in upcoming[:10]:
+        title = str(item.get("title") or "Actividad")
+        location = str(item.get("location") or "")
+        if redact_identity:
+            title = sanitize_text_for_remote_llm(title, replacements)
+            location = sanitize_text_for_remote_llm(location, replacements)
+        source = item.get("source_kind") or "direct"
+        line = f"  - {item.get('start_at')}: {title} [{source}, {item.get('flexibility')}]"
+        if location:
+            line += f" en {location}"
+        parts.append(line)
+    if pending:
+        sources: dict[str, int] = {}
+        for suggestion in pending:
+            source = suggestion.get("source_kind") or "otro"
+            sources[source] = sources.get(source, 0) + 1
+        summary = ", ".join(f"{source} {count}" for source, count in sorted(sources.items()))
+        parts.append(f"Sugerencias por revisar: {summary}. No las trates como compromisos hasta que se aprueben.")
+    return "\n  ".join(parts)
+
+
 def build_profile_context(
     current_message: str | None = None,
     *,
@@ -480,6 +518,14 @@ def build_profile_context(
     )
     if exercise_context:
         parts.append(f"\n[CUERPO Y ENTRENAMIENTO]:\n  {exercise_context}")
+        has_data = True
+
+    calendar_context = _build_calendar_context(
+        redact_identity=redact_identity,
+        replacements=replacements,
+    )
+    if calendar_context:
+        parts.append(f"\n[AGENDA Y COMPROMISOS]:\n  {calendar_context}")
         has_data = True
 
     for domain, summary in summaries.items():

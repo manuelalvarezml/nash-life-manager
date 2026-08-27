@@ -39,6 +39,7 @@ export function MicButton({ onTranscript, onResponse, onToolCalls, onProcessing,
           if (value.type === 'transcript') onTranscript(value.text || '');
           if (value.type === 'response') onResponse(value.text || '');
           if (value.type === 'tools') onToolCalls(value.calls);
+          if (value.type === 'diary') window.dispatchEvent(new Event('calendar-inbox-refresh'));
           if (value.type === 'error') onResponse(`Error: ${value.text}`);
         }
       } catch (err) {

@@ -18,9 +18,10 @@ This file is **onboarding context** for continuing Nash in another environment (
 
 - **Nash**: Private, **local-first** AI “life manager” for **Manuel** (Apple M4, 16GB RAM). As of **July 25, 2026**, the reasoning layer is moving from Ollama to the OpenAI API while keeping storage, audio, ASR, checkpoints, and vector retrieval local.
 - **As of August 27, 2026**, the Body module has a more serious workout engine: adherence-first hypertrophy planning, home/gym equipment awareness, fallback sessions, PR tracking, repeated body measurements, and workout-state injection into Nash's reasoning context.
+- **Also as of August 27, 2026**, the Calendar/Memory iteration is live: Agenda accepts direct voice/text changes, ingests proposals from diary/goals/workouts/bills, protects fixed commitments during replanning, and keeps unapproved suggestions separate. Diary memories now feed a structured chronological archive.
 - **Voice-first**: Primary input is Spanish speech; UI and Nash replies in **Spanish**. **No translation** of stored transcripts (nuance matters for psychological profiling). **English words** in speech are supported: ASR now defaults to local **NVIDIA Parakeet TDT v3** (`~/.nash/models/parakeet-tdt-0.6b-v3`) with multilingual support.
 - **Deep profile over time**: Declared truths + cumulative behavioral evidence, weights, contradictions — not generic coaching.
-- **Modular app**: Tabs for Home, Historial, “Lo que Nash sabe”, Sobre Mi, Metas, Cuerpo, Dinero, Dev (with Trabajo/Mente/Progreso still placeholder). Future: deeper nutrition/workout/finance, goals/calendar/time, work tracking, meta transparency.
+- **Modular app**: Tabs for Home, Historial, Recuerdos, “Lo que Nash sabe”, Sobre Mi, Metas, Agenda, Cuerpo, Dinero, Dev (with Trabajo/Mente/Progreso still placeholder). Future: deeper nutrition/finance/readiness integration, work tracking, and meta transparency.
 - **Agent stack**: **LangGraph** ReAct (not Deep Agents) — predictable tools, SQLite-friendly. Default reasoning path now targets **OpenAI `gpt-5.6`**, with Ollama preserved as an optional fallback.
 - **Design values**: Benign, no streak-shame, self-compassion over pile-ons; eventually **meta layer** (“why Nash asked this”, data gaps); research-informed habits/wellness where applicable.
 
@@ -32,9 +33,10 @@ This file is **onboarding context** for continuing Nash in another environment (
 
 - **FastAPI** (`main.py`): CORS, lifespan (dirs, logging, `init_db`, **audio migration**).
 - **Config** (`config.py`): `REPO_ROOT`, `NASH_HOME` (`~/.nash`), **`AUDIO_DIR = REPO_ROOT / "data/audio"`**, `LEGACY_AUDIO_DIR = ~/.nash/audio`, separate **`CHECKPOINT_DB_PATH`** for LangGraph (avoid closing main DB).
-- **SQLite** (`db/schema.py`): `diary_entries` (incl. `audio_path`, `duration_s`, summary), `memories`, `profile_summaries`, `profile_facts`, `insights`; helpers for insert/list/migration columns; **`link_audio_if_transcript_matches`**, **`get_registered_audio_basenames`**, **`apply_profile_summary_updates`**.
+- **SQLite** (`db/schema.py`): diary/profile/semantic/goal/body/finance data plus structured `memories` and the calendar model (`schedule_inputs`, `calendar_suggestions`, `calendar_series`, `calendar_items`, `calendar_item_history`, `schedule_preferences`). Calendar CRUD helpers are isolated in `db/calendar.py`.
 - **Audio** (`audio/`): `save_audio`, **NVIDIA Parakeet** transcribe (default local path `~/.nash/models/parakeet-tdt-0.6b-v3`, auto backend: NeMo or Transformers-compatible model path), NeMo long-audio chunks default to **120s** and continue from the timestamp of word **-15** from the previous chunk when word timestamps are available, **`brief_summary.py`** (short Spanish summary via local LLM), **`ingest.py`**: copy legacy → `data/audio`, ingest orphan audio files (transcribe + diary row), **audio extension filter** (skip `.gitignore`).
-- **Agent** (`agent/`): `graph.py` (shared LLM gateway, SqliteSaver on open sqlite conn, `prompt` injects profile + onboarding), `prompts.py` (Spanish, tools, **do not re-`log_diary_entry` when system note says voice already saved**), `profile.py` (context from summaries + facts + **finance snapshot + workout/body snapshot**), tools: diary, memory, `log_profile_fact`, **`profile_synthesize.py`** (refresh domain summaries from recent diaries), **`semantic_decomposer.py`** (extracts structured units, stores in SQLite + Chroma).
+- **Agent** (`agent/`): `profile.py` injects finance, workout/body, and accepted upcoming calendar state. Tools now include explicit schedule changes, upcoming schedule lookup, structured memory logging/search, diary, and profile facts. `semantic_decomposer.py` recognizes `action_item`, creates calendar suggestions, and promotes memories into the archive.
+- **Calendar engine** (`calendar_engine.py`): OpenAI-backed command interpretation behind the existing pseudonymization boundary, deterministic slot selection, recurrence, conflicts, safe replanning, approval workflow, and goal/workout/finance/diary adapters.
 - **Workout engine** (`exercise_engine.py`): deterministic planner for primary + fallback sessions, minimum/optimal mode selection, A/B full-body structures for home and gym, measurement protocol, adherence summaries, and dashboard assembly for the Body tab.
 - **API highlights**:
   - `POST /api/audio/upload` — save file → transcribe → **brief summary** → **`insert_diary_entry`** with `data/audio/...` path + optional **`duration_s`** from form → SSE: transcript, **diary** event (id, summary, audio URL), then agent (human message includes system note).
@@ -45,15 +47,18 @@ This file is **onboarding context** for continuing Nash in another environment (
   - `GET /api/questions/today`, `POST /api/questions/generate`, `POST /api/questions/answer`, `GET /api/questions/stats`.
   - **Goals graph APIs (V1):** `GET /api/goals/graph`, `POST /api/goals/relations`, `DELETE /api/goals/relations/{id}`, plus `parent_goal_id` support in goal create/update.
   - **Phase 5 APIs (V1):** module discovery (`POST /api/{module}/discovery/start`, `POST /api/{module}/discovery/{id}/chat`, etc.), nutrition (`/api/nutrition/*`), exercise (`/api/exercise/*`), finance (`/api/finance/*`).
+  - **Calendar + memories:** `/api/calendar/*` for dashboard, direct audio/text input, item edits, suggestions, sync, and preferences; `/api/memories/*` for searchable structured archive CRUD.
   - `GET /api/debug/last`, `GET /api/health`.
   - **Static**: `GET /media/audio/*` → `data/audio`.
 
 ### Frontend (`frontend/`)
 
 - **Vite** proxies `/api` and **`/media`** to backend (default port **8002** in config; confirm `vite.config.ts`).
-- **Tabs** (`App.tsx`): Inicio (`Home`), **Historial**, **Lo que Nash sabe** (`PerfilConocimiento`), **Sobre Mi**, **Metas**, **Cuerpo**, **Dinero**, placeholder tabs, and **Dev**.
+- **Tabs** (`App.tsx`): Inicio, Historial, **Recuerdos**, Lo que Nash sabe, Sobre Mi, Metas, **Agenda**, Cuerpo, Dinero, placeholders, and Dev.
 - **Home**: mic (`useAudioRecorder` returns **blob + durationSeconds**), `uploadAudio` sends **`duration_s`**), text chat, `StreamResponse`, and toggleable **Preguntas de hoy** side panel with loading/empty/error states + regenerate button.
 - **Cuerpo (V2 for workouts)**: nutrition tracking plus a fuller workout engine UI: discovery modal, exercise profile configuration, plan generation, set logging with RIR/RPE/failure, equipment inventory, measurement protocol + snapshots, PR history, and recent-session history.
+- **Agenda**: weekly view, direct voice/text commands, pending-decision badge, suggestion approve/edit/delete, completion and time edits, source labels, conflicts, and realistic scheduling preferences.
+- **Recuerdos**: chronological table with search and editable age/year/place/people/theme/emotion/significance/sensory metadata.
 - **Dinero (V1)**: Finance discovery modal, monthly summary, category totals, quick expense entry, recent movements list.
 - **Goal Discovery (updated)**: right side is now split top/bottom — floating goals graph on top, selected node detail/editor below (save pending goal, set parent, create/delete relations).
 - **Historial**: entries with **year in datetime** (`es-MX`), type chip, **`AudioPlayerRow`** (duration from **`duration_s`** or **`loadedmetadata`**).
@@ -89,6 +94,8 @@ In short: **Python 3.11+** + `pip install -r requirements.txt`, **Node 20+** + `
 12. **Goals graph V1 (2026-04-06)**: goals now support hierarchy (`parent_goal_id`) and explicit graph relations (`supports`, `depends_on`, etc.) with visual editing in discovery mode.
 13. **Finance advisory reset (July 25, 2026)**: the user wants Nash to behave more like a debt/financial advisor grounded in both spending data and emotional/self-sabotage patterns. The immediate next step is statement-PDF ingestion plus debt-vs-loan comparison logic, not just manual expense tracking.
 14. **Workout philosophy reset (August 27, 2026)**: the user explicitly wants muscle gain without fantasy-planning or shame loops. The engine should guarantee a bare-minimum useful workout, adapt to home vs gym reality, log failure without over-prescribing it, and coordinate with emotional/nutrition patterns from daily entries.
+15. **Calendar authority boundary (August 27, 2026):** direct commands may change the accepted schedule; diary detections and engine contributions must remain suggestions until approved. Fixed commitments are never silently moved by bulk replanning.
+16. **Memory chronology (August 27, 2026):** ages are converted locally to possible year ranges from birth date; explicit years take priority; inferred fields stay editable and visibly unverified.
 
 ---
 
@@ -113,6 +120,11 @@ In short: **Python 3.11+** + `pip install -r requirements.txt`, **Node 20+** + `
   - added deterministic primary/fallback training plans,
   - injected workout state into Nash's profile context,
   - updated exercise discovery to collect barriers, enjoyment, preferred days/location, and minimum vs optimal training windows.
+- Built **Calendar Engine V1 + Structured Memory Archive** on **August 27, 2026**:
+  - added Agenda and Recuerdos tabs;
+  - connected diary actions, goals, workouts, and financial due days through a suggestion inbox;
+  - added recurring scheduling, audit history, conflict detection, direct rearrangement, and local memory chronology;
+  - documented architecture and hypotheses in `docs/calendar_memory_engine.md`.
 
 ---
 
@@ -121,7 +133,7 @@ In short: **Python 3.11+** + `pip install -r requirements.txt`, **Node 20+** + `
 Aligned with **`nash_life_manager_plan.md`** / **`nash_life_manager_plan_reference.md`**:
 
 1. **Phase 6 iteration (Finance):** statement PDF ingestion, debt strategy cards (avalanche/snowball), envelope budgeting, recurring payment tracking, and loan-vs-card payoff comparison.
-2. **Phase 5 follow-through (Body):** nutrition audio logging UX, macro estimation pipeline, calendar coordination, and deeper adaptation between diary-based patterns, readiness, and workout planning.
+2. **Phase 5 follow-through (Body):** nutrition audio logging UX, macro estimation pipeline, and deeper readiness adaptation between diary patterns, schedule pressure, recovery, and workout planning.
 3. **QuestionEngine UX/perf:** improve long-running generation feedback/retry flow and reduce perceived wait.
 4. **Phase 8 Work module:** projects, tasks, sessions, distractions, tools + Work tab.
 5. **Meta layer:** session cards, “why this question”, what Nash knows/needs.
@@ -151,6 +163,8 @@ nash_life_manager/
 ├── backend/agent/prompts.py
 ├── backend/agent/profile_synthesize.py
 ├── backend/agent/semantic_decomposer.py  # active semantic unit extraction
+├── backend/calendar_engine.py       # scheduling, recurrence, adapters, command interpretation
+├── backend/db/calendar.py           # canonical calendar persistence helpers
 ├── backend/audio/transcriber.py
 ├── backend/audio/brief_summary.py
 ├── backend/audio/ingest.py
@@ -160,6 +174,8 @@ nash_life_manager/
     ├── api.ts
     ├── components/tabs/Home.tsx
     ├── components/tabs/Historial.tsx
+    ├── components/tabs/Agenda.tsx
+    ├── components/tabs/Recuerdos.tsx
     ├── components/tabs/PerfilConocimiento.tsx
     └── components/AudioPlayerRow.tsx
 ```

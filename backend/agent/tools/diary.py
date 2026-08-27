@@ -10,11 +10,11 @@ def log_diary_entry(
     summary: str = "",
     domain_tags: str = "[]",
 ) -> str:
-    """Log a diary entry when Manuel shares how he's feeling, what happened today, or reflects on his day.
+    """Log a diary entry when the user shares how they are feeling, what happened today, or reflects on their day.
 
     Args:
         entry_type: One of 'morning', 'night', or 'spontaneous'
-        content: The full content of what Manuel shared
+        content: The full content of what the user shared
         energy_level: Energy level from 1 (exhausted) to 10 (full energy), estimate from what he said
         summary: A brief 1-sentence summary of the entry
         domain_tags: JSON array of relevant domains like '["work", "relationships", "health"]'
@@ -31,7 +31,7 @@ def log_diary_entry(
 
 @tool
 def get_recent_entries(n: int = 5) -> str:
-    """Retrieve the most recent diary entries to understand Manuel's recent state.
+    """Retrieve the most recent diary entries to understand the user's recent state.
 
     Args:
         n: Number of recent entries to retrieve (default 5)

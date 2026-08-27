@@ -25,7 +25,25 @@ CREATE TABLE IF NOT EXISTS memories (
     raw_transcript TEXT NOT NULL,
     life_period TEXT CHECK (life_period IN ('childhood', 'adolescence', 'youth', 'present', 'unspecified')),
     chroma_id TEXT,
-    audio_path TEXT
+    audio_path TEXT,
+    diary_entry_id INTEGER REFERENCES diary_entries(id),
+    semantic_unit_id INTEGER REFERENCES semantic_units(id),
+    title TEXT,
+    occurred_year_start INTEGER,
+    occurred_year_end INTEGER,
+    age_start INTEGER,
+    age_end INTEGER,
+    place_name TEXT,
+    people_json TEXT NOT NULL DEFAULT '[]',
+    themes_json TEXT NOT NULL DEFAULT '[]',
+    emotional_valence TEXT,
+    memory_type TEXT,
+    significance INTEGER CHECK (significance IS NULL OR significance BETWEEN 1 AND 5),
+    sensory_details TEXT,
+    confidence REAL CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 1),
+    user_verified INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS profile_summaries (
@@ -70,7 +88,8 @@ CREATE TABLE IF NOT EXISTS semantic_units (
     emotional_valence TEXT,
     domains TEXT NOT NULL DEFAULT '[]',
     insight_potential TEXT NOT NULL DEFAULT 'low',
-    chroma_id TEXT
+    chroma_id TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS asked_questions (
@@ -228,6 +247,139 @@ CREATE TABLE IF NOT EXISTS goal_discovery_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_discovery_sessions_status ON goal_discovery_sessions(status);
+
+-- =============================================
+-- CALENDAR: commands -> suggestions -> commitments
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS schedule_preferences (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    timezone TEXT NOT NULL DEFAULT 'America/Lima',
+    day_start_time TEXT NOT NULL DEFAULT '08:00',
+    day_end_time TEXT NOT NULL DEFAULT '23:00',
+    focus_window_start TEXT DEFAULT '09:00',
+    focus_window_end TEXT DEFAULT '13:00',
+    default_task_duration_min INTEGER NOT NULL DEFAULT 30,
+    transition_buffer_min INTEGER NOT NULL DEFAULT 10,
+    max_scheduled_min_per_day INTEGER NOT NULL DEFAULT 480,
+    preferred_work_days_json TEXT NOT NULL DEFAULT '[0,1,2,3,4]',
+    protected_windows_json TEXT NOT NULL DEFAULT '[]',
+    notes TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS schedule_inputs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    input_mode TEXT NOT NULL DEFAULT 'text' CHECK (input_mode IN ('text', 'audio', 'diary', 'engine')),
+    raw_text TEXT NOT NULL,
+    audio_path TEXT,
+    command_type TEXT,
+    interpretation_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'processed', 'needs_review', 'failed')),
+    result_json TEXT NOT NULL DEFAULT '{}',
+    processed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS calendar_series (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    item_type TEXT NOT NULL DEFAULT 'routine' CHECK (item_type IN ('event', 'task', 'focus', 'routine', 'reminder')),
+    recurrence_json TEXT NOT NULL,
+    preferred_time TEXT,
+    duration_min INTEGER NOT NULL DEFAULT 30 CHECK (duration_min > 0),
+    first_date TEXT NOT NULL,
+    until_date TEXT,
+    source_kind TEXT NOT NULL DEFAULT 'direct',
+    source_id INTEGER,
+    source_key TEXT,
+    goal_id INTEGER REFERENCES goals(id),
+    domain_code TEXT,
+    priority INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
+    flexibility TEXT NOT NULL DEFAULT 'movable' CHECK (flexibility IN ('fixed', 'movable', 'free')),
+    energy_required INTEGER CHECK (energy_required IS NULL OR energy_required BETWEEN 1 AND 5),
+    location TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS calendar_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_id INTEGER REFERENCES calendar_series(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    item_type TEXT NOT NULL DEFAULT 'task' CHECK (item_type IN ('event', 'task', 'focus', 'routine', 'reminder')),
+    start_at TEXT,
+    end_at TEXT,
+    due_at TEXT,
+    all_day INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'completed', 'skipped', 'cancelled')),
+    source_kind TEXT NOT NULL DEFAULT 'direct',
+    source_id INTEGER,
+    source_key TEXT,
+    goal_id INTEGER REFERENCES goals(id),
+    domain_code TEXT,
+    priority INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
+    flexibility TEXT NOT NULL DEFAULT 'movable' CHECK (flexibility IN ('fixed', 'movable', 'free')),
+    energy_required INTEGER CHECK (energy_required IS NULL OR energy_required BETWEEN 1 AND 5),
+    location TEXT,
+    rationale TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT,
+    UNIQUE(series_id, start_at)
+);
+
+CREATE TABLE IF NOT EXISTS calendar_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    proposal_type TEXT NOT NULL DEFAULT 'create_item' CHECK (proposal_type IN ('create_item', 'create_series', 'update_item', 'rearrange')),
+    source_kind TEXT NOT NULL,
+    source_id INTEGER,
+    source_key TEXT,
+    fingerprint TEXT NOT NULL UNIQUE,
+    target_item_id INTEGER REFERENCES calendar_items(id),
+    target_series_id INTEGER REFERENCES calendar_series(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    proposed_start_at TEXT,
+    proposed_end_at TEXT,
+    due_at TEXT,
+    duration_min INTEGER,
+    item_type TEXT NOT NULL DEFAULT 'task',
+    recurrence_json TEXT,
+    goal_id INTEGER REFERENCES goals(id),
+    domain_code TEXT,
+    priority INTEGER NOT NULL DEFAULT 3,
+    flexibility TEXT NOT NULL DEFAULT 'movable',
+    energy_required INTEGER,
+    location TEXT,
+    confidence REAL,
+    rationale TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS calendar_item_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL REFERENCES calendar_items(id),
+    changed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    change_type TEXT NOT NULL,
+    before_json TEXT NOT NULL DEFAULT '{}',
+    after_json TEXT NOT NULL DEFAULT '{}',
+    reason TEXT,
+    schedule_input_id INTEGER REFERENCES schedule_inputs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_items_start ON calendar_items(start_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_items_status ON calendar_items(status);
+CREATE INDEX IF NOT EXISTS idx_calendar_items_source ON calendar_items(source_kind, source_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_suggestions_status ON calendar_suggestions(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_series_active ON calendar_series(active);
 
 -- =============================================
 -- PHASE 5: Nutricion, Ejercicio, Dinero
@@ -566,6 +718,7 @@ def init_db_sync():
     _migrate_diary_columns(conn)
     _migrate_goals_columns(conn)
     _migrate_body_module(conn)
+    _migrate_calendar_and_memory_module(conn)
     _seed_profile_domains(conn)
     _seed_life_domains(conn)
     _seed_expense_categories(conn)
@@ -742,6 +895,224 @@ def _migrate_body_module(conn: sqlite3.Connection):
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_body_measurements_taken_on ON body_measurement_snapshots(taken_on)")
+
+
+def _migrate_calendar_and_memory_module(conn: sqlite3.Connection):
+    """Add calendar orchestration and structured autobiographical memory fields."""
+    memory_cols = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
+    memory_defaults = {
+        "diary_entry_id": "INTEGER REFERENCES diary_entries(id)",
+        "semantic_unit_id": "INTEGER REFERENCES semantic_units(id)",
+        "title": "TEXT",
+        "occurred_year_start": "INTEGER",
+        "occurred_year_end": "INTEGER",
+        "age_start": "INTEGER",
+        "age_end": "INTEGER",
+        "place_name": "TEXT",
+        "people_json": "TEXT NOT NULL DEFAULT '[]'",
+        "themes_json": "TEXT NOT NULL DEFAULT '[]'",
+        "emotional_valence": "TEXT",
+        "memory_type": "TEXT",
+        "significance": "INTEGER CHECK (significance IS NULL OR significance BETWEEN 1 AND 5)",
+        "sensory_details": "TEXT",
+        "confidence": "REAL CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 1)",
+        "user_verified": "INTEGER NOT NULL DEFAULT 0",
+        "notes": "TEXT",
+        "updated_at": "TEXT",
+    }
+    for column, definition in memory_defaults.items():
+        if column not in memory_cols:
+            conn.execute(f"ALTER TABLE memories ADD COLUMN {column} {definition}")
+    conn.execute("UPDATE memories SET updated_at = COALESCE(updated_at, timestamp)")
+    conn.execute("UPDATE memories SET title = COALESCE(title, topic)")
+    conn.execute("UPDATE memories SET people_json = COALESCE(people_json, '[]')")
+    conn.execute("UPDATE memories SET themes_json = COALESCE(themes_json, '[]')")
+
+    semantic_cols = {row[1] for row in conn.execute("PRAGMA table_info(semantic_units)").fetchall()}
+    if "metadata_json" not in semantic_cols:
+        conn.execute("ALTER TABLE semantic_units ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
+
+    # Older databases do not see tables newly added to SCHEMA_SQL until this migration runs.
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS schedule_preferences (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            timezone TEXT NOT NULL DEFAULT 'America/Lima',
+            day_start_time TEXT NOT NULL DEFAULT '08:00',
+            day_end_time TEXT NOT NULL DEFAULT '23:00',
+            focus_window_start TEXT DEFAULT '09:00',
+            focus_window_end TEXT DEFAULT '13:00',
+            default_task_duration_min INTEGER NOT NULL DEFAULT 30,
+            transition_buffer_min INTEGER NOT NULL DEFAULT 10,
+            max_scheduled_min_per_day INTEGER NOT NULL DEFAULT 480,
+            preferred_work_days_json TEXT NOT NULL DEFAULT '[0,1,2,3,4]',
+            protected_windows_json TEXT NOT NULL DEFAULT '[]',
+            notes TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS schedule_inputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            input_mode TEXT NOT NULL DEFAULT 'text' CHECK (input_mode IN ('text', 'audio', 'diary', 'engine')),
+            raw_text TEXT NOT NULL,
+            audio_path TEXT,
+            command_type TEXT,
+            interpretation_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'processed', 'needs_review', 'failed')),
+            result_json TEXT NOT NULL DEFAULT '{}',
+            processed_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS calendar_series (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            item_type TEXT NOT NULL DEFAULT 'routine' CHECK (item_type IN ('event', 'task', 'focus', 'routine', 'reminder')),
+            recurrence_json TEXT NOT NULL,
+            preferred_time TEXT,
+            duration_min INTEGER NOT NULL DEFAULT 30 CHECK (duration_min > 0),
+            first_date TEXT NOT NULL,
+            until_date TEXT,
+            source_kind TEXT NOT NULL DEFAULT 'direct',
+            source_id INTEGER,
+            source_key TEXT,
+            goal_id INTEGER REFERENCES goals(id),
+            domain_code TEXT,
+            priority INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
+            flexibility TEXT NOT NULL DEFAULT 'movable' CHECK (flexibility IN ('fixed', 'movable', 'free')),
+            energy_required INTEGER CHECK (energy_required IS NULL OR energy_required BETWEEN 1 AND 5),
+            location TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS calendar_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            series_id INTEGER REFERENCES calendar_series(id),
+            title TEXT NOT NULL,
+            description TEXT,
+            item_type TEXT NOT NULL DEFAULT 'task' CHECK (item_type IN ('event', 'task', 'focus', 'routine', 'reminder')),
+            start_at TEXT,
+            end_at TEXT,
+            due_at TEXT,
+            all_day INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'completed', 'skipped', 'cancelled')),
+            source_kind TEXT NOT NULL DEFAULT 'direct',
+            source_id INTEGER,
+            source_key TEXT,
+            goal_id INTEGER REFERENCES goals(id),
+            domain_code TEXT,
+            priority INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
+            flexibility TEXT NOT NULL DEFAULT 'movable' CHECK (flexibility IN ('fixed', 'movable', 'free')),
+            energy_required INTEGER CHECK (energy_required IS NULL OR energy_required BETWEEN 1 AND 5),
+            location TEXT,
+            rationale TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT,
+            UNIQUE(series_id, start_at)
+        );
+        CREATE TABLE IF NOT EXISTS calendar_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            resolved_at TEXT,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+            proposal_type TEXT NOT NULL DEFAULT 'create_item' CHECK (proposal_type IN ('create_item', 'create_series', 'update_item', 'rearrange')),
+            source_kind TEXT NOT NULL,
+            source_id INTEGER,
+            source_key TEXT,
+            fingerprint TEXT NOT NULL UNIQUE,
+            target_item_id INTEGER REFERENCES calendar_items(id),
+            target_series_id INTEGER REFERENCES calendar_series(id),
+            title TEXT NOT NULL,
+            description TEXT,
+            proposed_start_at TEXT,
+            proposed_end_at TEXT,
+            due_at TEXT,
+            duration_min INTEGER,
+            item_type TEXT NOT NULL DEFAULT 'task',
+            recurrence_json TEXT,
+            goal_id INTEGER REFERENCES goals(id),
+            domain_code TEXT,
+            priority INTEGER NOT NULL DEFAULT 3,
+            flexibility TEXT NOT NULL DEFAULT 'movable',
+            energy_required INTEGER,
+            location TEXT,
+            confidence REAL,
+            rationale TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS calendar_item_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL REFERENCES calendar_items(id),
+            changed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            change_type TEXT NOT NULL,
+            before_json TEXT NOT NULL DEFAULT '{}',
+            after_json TEXT NOT NULL DEFAULT '{}',
+            reason TEXT,
+            schedule_input_id INTEGER REFERENCES schedule_inputs(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_calendar_items_start ON calendar_items(start_at);
+        CREATE INDEX IF NOT EXISTS idx_calendar_items_status ON calendar_items(status);
+        CREATE INDEX IF NOT EXISTS idx_calendar_items_source ON calendar_items(source_kind, source_id);
+        CREATE INDEX IF NOT EXISTS idx_calendar_suggestions_status ON calendar_suggestions(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_calendar_series_active ON calendar_series(active);
+        CREATE INDEX IF NOT EXISTS idx_memories_year ON memories(occurred_year_start, occurred_year_end);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_semantic_unit
+            ON memories(semantic_unit_id) WHERE semantic_unit_id IS NOT NULL;
+        """
+    )
+    conn.execute(
+        """INSERT OR IGNORE INTO schedule_preferences (
+               id, timezone, day_start_time, day_end_time, default_task_duration_min,
+               transition_buffer_min, max_scheduled_min_per_day
+        ) VALUES (1, 'America/Lima', '08:00', '23:00', 30, 10, 480)"""
+    )
+    _backfill_structured_memories(conn)
+
+
+def _backfill_structured_memories(conn: sqlite3.Connection) -> None:
+    """Promote previously extracted memory units into the chronological archive."""
+    birth_year = None
+    profile = conn.execute(
+        "SELECT birth_date FROM self_profile_facts ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if profile and profile[0]:
+        try:
+            birth_year = datetime.strptime(profile[0], "%Y-%m-%d").year
+        except ValueError:
+            pass
+    rows = conn.execute(
+        """SELECT su.* FROM semantic_units su
+           LEFT JOIN memories m ON m.semantic_unit_id = su.id
+           WHERE su.unit_type = 'memory' AND m.id IS NULL"""
+    ).fetchall()
+    for row in rows:
+        data = dict(zip([column[0] for column in conn.execute("SELECT * FROM semantic_units LIMIT 0").description], row))
+        age = data.get("age_referenced")
+        year_start = birth_year + int(age) if birth_year is not None and age is not None else None
+        year_end = year_start + 1 if year_start is not None else None
+        title = str(data.get("content") or "Recuerdo")[:100].strip()
+        conn.execute(
+            """INSERT OR IGNORE INTO memories (
+                   topic, title, raw_transcript, life_period, semantic_unit_id,
+                   occurred_year_start, occurred_year_end, age_start, age_end,
+                   themes_json, emotional_valence, confidence, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.6, datetime('now'))""",
+            (
+                title,
+                title,
+                data.get("content") or title,
+                data.get("life_period") or "unspecified",
+                data.get("id"),
+                year_start,
+                year_end,
+                age,
+                age,
+                data.get("topics") or "[]",
+                data.get("emotional_valence"),
+            ),
+        )
 
 
 def _rebuild_goals_table(conn: sqlite3.Connection, existing_cols: set[str]):
@@ -991,6 +1362,135 @@ def insert_memory(
     conn.commit()
     conn.close()
     return memory_id
+
+
+def insert_structured_memory(data: dict) -> dict:
+    """Store a memory extracted from speech while preserving its source and uncertainty."""
+    conn = _get_sync_conn()
+    semantic_unit_id = data.get("semantic_unit_id")
+    if semantic_unit_id is not None:
+        existing = conn.execute(
+            "SELECT * FROM memories WHERE semantic_unit_id = ?",
+            (semantic_unit_id,),
+        ).fetchone()
+        if existing:
+            conn.close()
+            return _normalize_memory_row(existing)
+
+    title = str(data.get("title") or data.get("topic") or "Recuerdo sin titulo").strip()
+    raw_transcript = str(data.get("raw_transcript") or data.get("content") or title).strip()
+    life_period = data.get("life_period") or "unspecified"
+    if life_period not in {"childhood", "adolescence", "youth", "present", "unspecified"}:
+        life_period = "unspecified"
+
+    cursor = conn.execute(
+        """INSERT INTO memories (
+               topic, title, raw_transcript, life_period, audio_path, diary_entry_id,
+               semantic_unit_id, occurred_year_start, occurred_year_end, age_start,
+               age_end, place_name, people_json, themes_json, emotional_valence,
+               memory_type, significance, sensory_details, confidence, user_verified,
+               notes, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+        (
+            title,
+            title,
+            raw_transcript,
+            life_period,
+            data.get("audio_path"),
+            data.get("diary_entry_id"),
+            semantic_unit_id,
+            data.get("occurred_year_start"),
+            data.get("occurred_year_end"),
+            data.get("age_start"),
+            data.get("age_end"),
+            data.get("place_name"),
+            json.dumps(data.get("people") or [], ensure_ascii=False),
+            json.dumps(data.get("themes") or [], ensure_ascii=False),
+            data.get("emotional_valence"),
+            data.get("memory_type"),
+            data.get("significance"),
+            data.get("sensory_details"),
+            data.get("confidence"),
+            1 if data.get("user_verified") else 0,
+            data.get("notes"),
+        ),
+    )
+    memory_id = int(cursor.lastrowid)
+    conn.commit()
+    row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    conn.close()
+    return _normalize_memory_row(row)
+
+
+def _normalize_memory_row(row: sqlite3.Row | dict) -> dict:
+    result = dict(row)
+    for raw_field, parsed_field in [("people_json", "people"), ("themes_json", "themes")]:
+        try:
+            result[parsed_field] = json.loads(result.get(raw_field) or "[]")
+        except (TypeError, json.JSONDecodeError):
+            result[parsed_field] = []
+    return result
+
+
+def get_memories(limit: int = 500, search: str | None = None) -> list[dict]:
+    conn = _get_sync_conn()
+    params: list = []
+    where = ""
+    if search and search.strip():
+        needle = f"%{search.strip()}%"
+        where = "WHERE title LIKE ? OR raw_transcript LIKE ? OR place_name LIKE ? OR themes_json LIKE ?"
+        params.extend([needle, needle, needle, needle])
+    params.append(max(1, min(int(limit), 2000)))
+    rows = conn.execute(
+        f"""SELECT * FROM memories {where}
+            ORDER BY
+                CASE WHEN occurred_year_end IS NULL THEN 1 ELSE 0 END,
+                occurred_year_end DESC,
+                occurred_year_start DESC,
+                timestamp DESC
+            LIMIT ?""",
+        params,
+    ).fetchall()
+    conn.close()
+    return [_normalize_memory_row(row) for row in rows]
+
+
+def update_memory(memory_id: int, updates: dict) -> dict | None:
+    allowed = {
+        "title", "raw_transcript", "life_period", "occurred_year_start",
+        "occurred_year_end", "age_start", "age_end", "place_name",
+        "emotional_valence", "memory_type", "significance", "sensory_details",
+        "confidence", "user_verified", "notes",
+    }
+    normalized = {key: value for key, value in updates.items() if key in allowed}
+    if "people" in updates:
+        normalized["people_json"] = json.dumps(updates.get("people") or [], ensure_ascii=False)
+    if "themes" in updates:
+        normalized["themes_json"] = json.dumps(updates.get("themes") or [], ensure_ascii=False)
+    if not normalized:
+        return None
+    normalized["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    if "title" in normalized:
+        normalized["topic"] = normalized["title"]
+    conn = _get_sync_conn()
+    assignments = ", ".join(f"{field} = ?" for field in normalized)
+    conn.execute(
+        f"UPDATE memories SET {assignments} WHERE id = ?",
+        [*normalized.values(), memory_id],
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    conn.close()
+    return _normalize_memory_row(row) if row else None
+
+
+def delete_memory(memory_id: int) -> bool:
+    conn = _get_sync_conn()
+    cursor = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+    conn.commit()
+    deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
 
 
 def insert_profile_fact(
@@ -1266,15 +1766,16 @@ def insert_semantic_unit(
     domains: str = "[]",
     insight_potential: str = "low",
     chroma_id: str | None = None,
+    metadata_json: str = "{}",
 ) -> int:
     conn = _get_sync_conn()
     cursor = conn.execute(
         """INSERT INTO semantic_units
            (diary_entry_id, unit_type, content, life_period, age_referenced,
-            topics, emotional_valence, domains, insight_potential, chroma_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            topics, emotional_valence, domains, insight_potential, chroma_id, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (diary_entry_id, unit_type, content, life_period, age_referenced,
-         topics, emotional_valence, domains, insight_potential, chroma_id),
+         topics, emotional_valence, domains, insight_potential, chroma_id, metadata_json),
     )
     unit_id = cursor.lastrowid
     conn.commit()

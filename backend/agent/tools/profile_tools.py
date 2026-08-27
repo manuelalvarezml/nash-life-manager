@@ -8,13 +8,13 @@ def log_profile_fact(
     statement: str,
     fact_type: str = "declared",
 ) -> str:
-    """Log a fact about Manuel's personality, identity, or behavioral patterns. Use when Manuel \
+    """Log a fact about the user's personality, identity, or behavioral patterns. Use when the user \
     makes a direct statement about who he is, what he struggles with, or how he tends to behave.
 
     Args:
         domain: One of 'identity', 'patterns', 'sabotage', 'strengths', 'relationships', 'narrative', 'goals'
-        statement: The specific fact or self-description (in Manuel's words when possible)
-        fact_type: 'declared' for things Manuel says directly, 'behavioral' for observed patterns, 'inferred' for deductions
+        statement: The specific fact or self-description (in the user's words when possible)
+        fact_type: 'declared' for things the user says directly, 'behavioral' for observed patterns, 'inferred' for deductions
     """
     fact_id = insert_profile_fact(
         domain=domain,
