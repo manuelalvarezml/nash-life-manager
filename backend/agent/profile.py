@@ -2,14 +2,20 @@ import structlog
 
 from backend.db.schema import (
     get_entry_count,
+    get_exercise_profile,
     get_expenses,
     get_finance_profile,
+    get_latest_body_measurement_snapshot,
     get_monthly_expense_summary,
+    get_personal_records,
     get_profile_facts,
     get_profile_summaries,
     get_self_profile,
+    get_workout_adherence_summary,
+    get_workout_sessions,
 )
 from backend.db.chroma import query_semantic_units
+from backend.exercise_engine import generate_workout_plan
 from backend.llm import build_literal_replacements, sanitize_text_for_remote_llm
 
 log = structlog.get_logger()
@@ -244,6 +250,197 @@ def _build_finance_context(
     return "\n  ".join(parts)
 
 
+def _build_exercise_context(
+    *,
+    redact_identity: bool = False,
+    replacements: list[tuple[str, str]] | None = None,
+) -> str | None:
+    try:
+        profile = get_exercise_profile() or {}
+        latest_measurement = get_latest_body_measurement_snapshot()
+        recent_sessions = get_workout_sessions(limit=4)
+        recent_records = get_personal_records(limit=4)
+        adherence_7 = get_workout_adherence_summary(days=7)
+        adherence_28 = get_workout_adherence_summary(days=28)
+        plan = generate_workout_plan()
+    except Exception as exc:
+        log.warning("exercise_context_unavailable", error=str(exc))
+        return None
+
+    has_snapshot = any(
+        [
+            profile,
+            latest_measurement,
+            recent_sessions,
+            recent_records,
+            adherence_7.get("total_sessions"),
+            adherence_28.get("total_sessions"),
+        ]
+    )
+    if not has_snapshot:
+        return None
+
+    goal_labels = {
+        "muscle_gain": "ganar musculo",
+        "strength": "ganar fuerza",
+        "recomposition": "recomposicion",
+        "general_fitness": "salud general",
+    }
+    level_labels = {
+        "beginner": "principiante",
+        "intermediate": "intermedio",
+        "advanced": "avanzado",
+    }
+    location_labels = {
+        "home": "casa",
+        "gym": "gym",
+        "either": "flexible",
+    }
+
+    def _sanitize(value: str | None, limit: int = 180) -> str | None:
+        if not value:
+            return None
+        trimmed = value[:limit]
+        return (
+            sanitize_text_for_remote_llm(trimmed, replacements)
+            if redact_identity
+            else trimmed
+        )
+
+    training_target = plan.get("training_target") or {}
+    primary_session = plan.get("primary_session") or {}
+    fallback_session = plan.get("fallback_session") or {}
+
+    parts: list[str] = []
+
+    goal = goal_labels.get(profile.get("primary_goal"), profile.get("primary_goal"))
+    level = level_labels.get(profile.get("fitness_level"), profile.get("fitness_level"))
+    if goal or level:
+        sentence = "Objetivo corporal"
+        if goal:
+            sentence += f": {goal}"
+        if level:
+            sentence += f" | nivel {level}"
+        parts.append(sentence)
+
+    weekly_target = profile.get("workout_days_per_week")
+    min_minutes = profile.get("minimum_session_min")
+    optimal_minutes = profile.get("optimal_session_min") or profile.get("time_per_workout_min")
+    preferred_location = location_labels.get(
+        profile.get("preferred_location"),
+        profile.get("preferred_location"),
+    )
+    schedule_days = profile.get("schedule_days") or []
+    schedule_text = ", ".join(str(day) for day in schedule_days[:4]) if schedule_days else None
+    if weekly_target or min_minutes or optimal_minutes or preferred_location:
+        parts.append(
+            "Piso y estructura: "
+            f"{weekly_target or '?'} sesiones/semana, minimo {min_minutes or '?'} min, "
+            f"optimo {optimal_minutes or '?'} min, lugar preferido {preferred_location or 'no definido'}"
+        )
+    if schedule_text:
+        parts.append(f"Dias preferidos: {schedule_text}")
+
+    barriers = profile.get("barriers") or []
+    if barriers:
+        parts.append(f"Barreras de adherencia: {', '.join(str(item) for item in barriers[:5])}")
+
+    enjoyment = profile.get("enjoyment") or []
+    if enjoyment:
+        parts.append(f"Lo que suele disfrutar mas: {', '.join(str(item) for item in enjoyment[:5])}")
+
+    limitations = profile.get("limitations") or []
+    if limitations:
+        parts.append(f"Limitaciones o cuidado: {', '.join(str(item) for item in limitations[:5])}")
+
+    history_note = _sanitize(profile.get("training_history_notes"))
+    if history_note:
+        parts.append(f"Historia de entrenamiento: {history_note}")
+
+    general_note = _sanitize(profile.get("notes"))
+    if general_note:
+        parts.append(f"Notas del modulo cuerpo: {general_note}")
+
+    phase = training_target.get("phase")
+    weekly_sessions_target = training_target.get("weekly_sessions_target")
+    hard_sets = training_target.get("hard_sets_goal_per_muscle")
+    if phase or weekly_sessions_target or hard_sets:
+        parts.append(
+            "Fase actual del motor: "
+            f"{phase or 'base'} | objetivo semanal {weekly_sessions_target or '?'} sesiones | "
+            f"hard sets objetivo {hard_sets or '?'} por grupo muscular"
+        )
+
+    primary_name = primary_session.get("name")
+    fallback_name = fallback_session.get("name")
+    primary_time = primary_session.get("estimated_duration_min")
+    fallback_time = fallback_session.get("estimated_duration_min")
+    if primary_name or fallback_name:
+        parts.append(
+            "Plan sugerido hoy: "
+            f"{primary_name or 'sin plan'} ({primary_time or '?'} min). "
+            f"Rescate: {fallback_name or 'sin rescate'} ({fallback_time or '?'} min)."
+        )
+
+    sessions_7 = adherence_7.get("total_sessions") or 0
+    sessions_28 = adherence_28.get("total_sessions") or 0
+    minutes_7 = adherence_7.get("total_duration_min") or 0
+    fallback_7 = adherence_7.get("fallback_sessions") or 0
+    parts.append(
+        "Adherencia reciente: "
+        f"{sessions_7} sesiones en 7 dias ({minutes_7} min totales, {fallback_7} rescates), "
+        f"{sessions_28} sesiones en 28 dias."
+    )
+
+    if latest_measurement:
+        measurement_parts = []
+        for label, field in [
+            ("peso", "weight_kg"),
+            ("cintura", "waist_cm"),
+            ("cadera", "hip_cm"),
+            ("brazo", "arm_relaxed_cm"),
+            ("muslo", "thigh_cm"),
+        ]:
+            value = latest_measurement.get(field)
+            if value is not None:
+                measurement_parts.append(f"{label} {value}")
+        if measurement_parts:
+            parts.append(
+                f"Ultima medicion ({latest_measurement.get('taken_on')}): "
+                + ", ".join(measurement_parts)
+            )
+    else:
+        parts.append(
+            "Mediciones corporales: aun no hay linea base registrada. Para hipertrofia, "
+            "conviene combinar peso, cintura y perimetros repetibles."
+        )
+
+    if recent_records:
+        record_parts = []
+        for record in recent_records[:3]:
+            weight = record.get("weight_kg") or 0
+            reps = record.get("reps") or 0
+            if weight:
+                record_parts.append(f"{record.get('exercise_name')}: {weight} kg x {reps}")
+            else:
+                record_parts.append(f"{record.get('exercise_name')}: {reps} reps")
+        if record_parts:
+            parts.append(f"PRs recientes: {' | '.join(record_parts)}")
+
+    if recent_sessions:
+        session_parts = []
+        for session in recent_sessions[:3]:
+            session_parts.append(
+                f"{session.get('date')}: {session.get('level')} "
+                f"{session.get('actual_location') or session.get('planned_location') or 'n/a'} "
+                f"{session.get('duration_min') or '?'} min "
+                f"(energia {session.get('energy_level') or '?'}, RPE {session.get('session_rpe') or '?'})"
+            )
+        parts.append(f"Ultimas sesiones: {' | '.join(session_parts)}")
+
+    return "\n  ".join(parts)
+
+
 def build_profile_context(
     current_message: str | None = None,
     *,
@@ -275,6 +472,14 @@ def build_profile_context(
     )
     if finance_context:
         parts.append(f"\n[FINANZAS]:\n  {finance_context}")
+        has_data = True
+
+    exercise_context = _build_exercise_context(
+        redact_identity=redact_identity,
+        replacements=replacements,
+    )
+    if exercise_context:
+        parts.append(f"\n[CUERPO Y ENTRENAMIENTO]:\n  {exercise_context}")
         has_data = True
 
     for domain, summary in summaries.items():

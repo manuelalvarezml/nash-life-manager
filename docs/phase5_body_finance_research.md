@@ -14,6 +14,109 @@
 
 ---
 
+## 2026-08-27: Workout Engine Iteration - What Changed and Why
+
+### Updated intent
+- This is not a fitness app designed to keep someone hooked.
+- This is a life companion that should help the user actually train more often, with less shame and less fantasy-planning.
+- The workout engine should help Nash answer:
+  - what is the smallest useful session today?
+  - what is the best full session today if energy/time allow it?
+  - what tends to break the habit?
+  - what kind of training the user actually enjoys enough to repeat?
+  - how do training, food, stress, and self-sabotage interact?
+
+### Decisions taken
+
+#### 1. Adherence first, optimization second
+- The engine now treats the **minimum session** as a real success state, not a failed version of the optimal workout.
+- Reason:
+  - minimal-dose resistance training can lower barriers to participation and may reduce negative affective response while still producing useful strength/hypertrophy progress over time.
+
+#### 2. Full-body A/B structure over complicated splits
+- The current plan logic uses full-body sessions with home and gym variants, plus a rescue session for home.
+- Reason:
+  - training frequency by itself does not seem to meaningfully change hypertrophy outcomes when weekly volume is equated, so preference and realism matter a lot.
+  - for an inconsistent gym rhythm, full-body sessions are more forgiving than complex split dependencies.
+
+#### 3. Failure is logged, but not prescribed everywhere
+- Nash now tracks `reached_failure`, `RIR`, `RPE`, hard sets, and PRs.
+- But the training logic does **not** require failure on all movements.
+- Reason:
+  - current meta-analytic evidence suggests resistance training to failure is not necessary in general for hypertrophy or strength.
+  - for this project, "go to failure often on everything" would likely create fatigue, dread, and lower adherence.
+- Current practical rule:
+  - compounds: usually `1-3 RIR`
+  - safer isolation or machine work: can approach `0-2 RIR`, especially on the last set if technique is still clean
+
+#### 4. Measurements should be standardized, not obsessive
+- The engine now includes a measurement protocol and dedicated snapshot storage.
+- Recommended baseline:
+  - weight
+  - height
+  - waist
+  - hip
+  - relaxed arm
+  - optional: flexed arm, chest, thigh, calf
+- Reason:
+  - bodyweight alone can miss recomposition or localized progress.
+  - repeated circumference measures are low-cost and useful when landmarks are kept consistent.
+
+### Measurement protocol choices
+- Weight:
+  - same scale, morning, after bathroom, before food if possible
+- Height:
+  - standing upright, head aligned forward, measured in cm
+- Waist:
+  - horizontal tape just above the iliac crest, at the end of a normal exhalation
+- Hip:
+  - horizontal tape at the maximal extension of the glutes
+- Relaxed arm:
+  - midpoint between acromion and olecranon, same side every time
+- Reliability rule:
+  - take 2 measurements
+  - if they differ by more than 1 cm, take a third
+  - keep the 2 closest values or average consistently
+
+### What the engine now captures
+- Current goal and fitness level
+- Home and gym equipment
+- Weekly target, minimum minutes, optimal minutes
+- Preferred days and place to train
+- Adherence barriers
+- What the user enjoys
+- Session logs with reps, weight, RIR, RPE, failure
+- Recent PRs
+- Repeated body measurements
+
+### What still remains for later
+- Automatic nutrition-informed workout adjustments beyond the current protein bridge
+- Calendar-driven scheduling and reminders
+- Financial engine PDF ingestion and debt decision support
+
+### Useful sources behind these decisions
+- ACSM resistance training update (2026):
+  - https://acsm.org/resistance-training-guidelines-update-2026/
+- Meta-analysis on failure vs non-failure:
+  - https://pubmed.ncbi.nlm.nih.gov/33497853/
+- Meta-analysis on training frequency when volume is equated:
+  - https://pubmed.ncbi.nlm.nih.gov/30558493/
+- Minimal-dose resistance training review:
+  - https://pubmed.ncbi.nlm.nih.gov/34822137/
+- Minimal-dose strategies overview:
+  - https://pubmed.ncbi.nlm.nih.gov/38509414/
+- Arm circumference as a practical hypertrophy tracking tool:
+  - https://pubmed.ncbi.nlm.nih.gov/33426361/
+- PhenX/NHANES measurement protocols:
+  - Waist: https://www.phenxtoolkit.org/protocols/view/21604
+  - Hip: https://www.phenxtoolkit.org/protocols/view/20803
+  - Mid-upper arm: https://www.phenxtoolkit.org/protocols/view/21102
+  - Height: https://phenxtoolkit.org/protocols/view/20706?origin=browse
+  - Weight: https://www.phenxtoolkit.org/protocols/view/21503?origin=subcollection
+  - CDC waist basics: https://www.cdc.gov/diabetes/living-with/healthy-weight.html
+
+---
+
 ## Module 1: Nutricion
 
 ### Purpose

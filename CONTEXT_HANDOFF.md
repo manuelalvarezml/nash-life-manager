@@ -17,6 +17,7 @@ This file is **onboarding context** for continuing Nash in another environment (
 ## Product intent (from the user)
 
 - **Nash**: Private, **local-first** AI “life manager” for **Manuel** (Apple M4, 16GB RAM). As of **July 25, 2026**, the reasoning layer is moving from Ollama to the OpenAI API while keeping storage, audio, ASR, checkpoints, and vector retrieval local.
+- **As of August 27, 2026**, the Body module has a more serious workout engine: adherence-first hypertrophy planning, home/gym equipment awareness, fallback sessions, PR tracking, repeated body measurements, and workout-state injection into Nash's reasoning context.
 - **Voice-first**: Primary input is Spanish speech; UI and Nash replies in **Spanish**. **No translation** of stored transcripts (nuance matters for psychological profiling). **English words** in speech are supported: ASR now defaults to local **NVIDIA Parakeet TDT v3** (`~/.nash/models/parakeet-tdt-0.6b-v3`) with multilingual support.
 - **Deep profile over time**: Declared truths + cumulative behavioral evidence, weights, contradictions — not generic coaching.
 - **Modular app**: Tabs for Home, Historial, “Lo que Nash sabe”, Sobre Mi, Metas, Cuerpo, Dinero, Dev (with Trabajo/Mente/Progreso still placeholder). Future: deeper nutrition/workout/finance, goals/calendar/time, work tracking, meta transparency.
@@ -33,7 +34,8 @@ This file is **onboarding context** for continuing Nash in another environment (
 - **Config** (`config.py`): `REPO_ROOT`, `NASH_HOME` (`~/.nash`), **`AUDIO_DIR = REPO_ROOT / "data/audio"`**, `LEGACY_AUDIO_DIR = ~/.nash/audio`, separate **`CHECKPOINT_DB_PATH`** for LangGraph (avoid closing main DB).
 - **SQLite** (`db/schema.py`): `diary_entries` (incl. `audio_path`, `duration_s`, summary), `memories`, `profile_summaries`, `profile_facts`, `insights`; helpers for insert/list/migration columns; **`link_audio_if_transcript_matches`**, **`get_registered_audio_basenames`**, **`apply_profile_summary_updates`**.
 - **Audio** (`audio/`): `save_audio`, **NVIDIA Parakeet** transcribe (default local path `~/.nash/models/parakeet-tdt-0.6b-v3`, auto backend: NeMo or Transformers-compatible model path), NeMo long-audio chunks default to **120s** and continue from the timestamp of word **-15** from the previous chunk when word timestamps are available, **`brief_summary.py`** (short Spanish summary via local LLM), **`ingest.py`**: copy legacy → `data/audio`, ingest orphan audio files (transcribe + diary row), **audio extension filter** (skip `.gitignore`).
-- **Agent** (`agent/`): `graph.py` (shared LLM gateway, SqliteSaver on open sqlite conn, `prompt` injects profile + onboarding), `prompts.py` (Spanish, tools, **do not re-`log_diary_entry` when system note says voice already saved**), `profile.py` (context from summaries + facts + **finance snapshot**), tools: diary, memory, `log_profile_fact`, **`profile_synthesize.py`** (refresh domain summaries from recent diaries), **`semantic_decomposer.py`** (extracts structured units, stores in SQLite + Chroma).
+- **Agent** (`agent/`): `graph.py` (shared LLM gateway, SqliteSaver on open sqlite conn, `prompt` injects profile + onboarding), `prompts.py` (Spanish, tools, **do not re-`log_diary_entry` when system note says voice already saved**), `profile.py` (context from summaries + facts + **finance snapshot + workout/body snapshot**), tools: diary, memory, `log_profile_fact`, **`profile_synthesize.py`** (refresh domain summaries from recent diaries), **`semantic_decomposer.py`** (extracts structured units, stores in SQLite + Chroma).
+- **Workout engine** (`exercise_engine.py`): deterministic planner for primary + fallback sessions, minimum/optimal mode selection, A/B full-body structures for home and gym, measurement protocol, adherence summaries, and dashboard assembly for the Body tab.
 - **API highlights**:
   - `POST /api/audio/upload` — save file → transcribe → **brief summary** → **`insert_diary_entry`** with `data/audio/...` path + optional **`duration_s`** from form → SSE: transcript, **diary** event (id, summary, audio URL), then agent (human message includes system note).
   - `POST /api/chat` — text → agent stream.
@@ -51,7 +53,7 @@ This file is **onboarding context** for continuing Nash in another environment (
 - **Vite** proxies `/api` and **`/media`** to backend (default port **8002** in config; confirm `vite.config.ts`).
 - **Tabs** (`App.tsx`): Inicio (`Home`), **Historial**, **Lo que Nash sabe** (`PerfilConocimiento`), **Sobre Mi**, **Metas**, **Cuerpo**, **Dinero**, placeholder tabs, and **Dev**.
 - **Home**: mic (`useAudioRecorder` returns **blob + durationSeconds**), `uploadAudio` sends **`duration_s`**), text chat, `StreamResponse`, and toggleable **Preguntas de hoy** side panel with loading/empty/error states + regenerate button.
-- **Cuerpo (V1)**: Nutrition + Exercise section with discovery modal, daily nutrition totals, food logging, workout session logging, recent activity lists.
+- **Cuerpo (V2 for workouts)**: nutrition tracking plus a fuller workout engine UI: discovery modal, exercise profile configuration, plan generation, set logging with RIR/RPE/failure, equipment inventory, measurement protocol + snapshots, PR history, and recent-session history.
 - **Dinero (V1)**: Finance discovery modal, monthly summary, category totals, quick expense entry, recent movements list.
 - **Goal Discovery (updated)**: right side is now split top/bottom — floating goals graph on top, selected node detail/editor below (save pending goal, set parent, create/delete relations).
 - **Historial**: entries with **year in datetime** (`es-MX`), type chip, **`AudioPlayerRow`** (duration from **`duration_s`** or **`loadedmetadata`**).
@@ -86,6 +88,7 @@ In short: **Python 3.11+** + `pip install -r requirements.txt`, **Node 20+** + `
 11. **Question generation latency**: `Generar ahora` is a full LLM call and commonly takes ~20–40 seconds on current setup.
 12. **Goals graph V1 (2026-04-06)**: goals now support hierarchy (`parent_goal_id`) and explicit graph relations (`supports`, `depends_on`, etc.) with visual editing in discovery mode.
 13. **Finance advisory reset (July 25, 2026)**: the user wants Nash to behave more like a debt/financial advisor grounded in both spending data and emotional/self-sabotage patterns. The immediate next step is statement-PDF ingestion plus debt-vs-loan comparison logic, not just manual expense tracking.
+14. **Workout philosophy reset (August 27, 2026)**: the user explicitly wants muscle gain without fantasy-planning or shame loops. The engine should guarantee a bare-minimum useful workout, adapt to home vs gym reality, log failure without over-prescribing it, and coordinate with emotional/nutrition patterns from daily entries.
 
 ---
 
@@ -105,6 +108,11 @@ In short: **Python 3.11+** + `pip install -r requirements.txt`, **Node 20+** + `
   - outbound pseudonymization (default alias: `Antonio`),
   - local-name restoration for UI/storage,
   - local Chroma embedding fallback so semantic retrieval no longer requires Ollama.
+- Built **Workout Engine V2** on **August 27, 2026**:
+  - expanded body schema and API for equipment, measurements, richer session logs, and PRs,
+  - added deterministic primary/fallback training plans,
+  - injected workout state into Nash's profile context,
+  - updated exercise discovery to collect barriers, enjoyment, preferred days/location, and minimum vs optimal training windows.
 
 ---
 
@@ -112,8 +120,8 @@ In short: **Python 3.11+** + `pip install -r requirements.txt`, **Node 20+** + `
 
 Aligned with **`nash_life_manager_plan.md`** / **`nash_life_manager_plan_reference.md`**:
 
-1. **Phase 5 iteration (Body):** add nutrition audio logging UX, macro estimation pipeline, default workout templates, and progression/PR views.
-2. **Phase 6 iteration (Finance):** statement PDF ingestion, debt strategy cards (avalanche/snowball), envelope budgeting, recurring payment tracking, and loan-vs-card payoff comparison.
+1. **Phase 6 iteration (Finance):** statement PDF ingestion, debt strategy cards (avalanche/snowball), envelope budgeting, recurring payment tracking, and loan-vs-card payoff comparison.
+2. **Phase 5 follow-through (Body):** nutrition audio logging UX, macro estimation pipeline, calendar coordination, and deeper adaptation between diary-based patterns, readiness, and workout planning.
 3. **QuestionEngine UX/perf:** improve long-running generation feedback/retry flow and reduce perceived wait.
 4. **Phase 8 Work module:** projects, tasks, sessions, distractions, tools + Work tab.
 5. **Meta layer:** session cards, “why this question”, what Nash knows/needs.

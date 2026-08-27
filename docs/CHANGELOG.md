@@ -5,6 +5,120 @@
 
 ---
 
+## 2026-08-27: Workout Engine v2 - Adherence-First Hypertrophy, Measurements, and Agent Integration
+
+### Problem Statement
+The original Body module was still too thin for the user's actual goal:
+
+- it had workout logging, but not a real training engine built around **muscle gain with imperfect adherence**;
+- Nash could not reliably connect workout recommendations to real-world constraints like home vs gym equipment, low-energy days, missed sessions, or emotional friction;
+- there was no standardized measurement baseline for tracking physique change beyond scale weight;
+- the exercise discovery flow was still tuned to a simpler V1 schema and could not capture barriers, enjoyment, minimum viable session length, or preferred training context.
+
+This mattered because the project is not supposed to optimize for engagement or guilt. It needs to optimize for **actually getting Manuel to train consistently**, while preserving enough signal for Nash to coach him intelligently.
+
+### What Changed
+- Added a deterministic workout engine in `backend/exercise_engine.py`.
+  - Generates a **primary session** plus a **home fallback rescue session**.
+  - Chooses between **minimum** and **optimal** modes based on time, energy, and adherence.
+  - Alternates A/B full-body structures for home and gym.
+  - Tracks progression cues from previous logged performance.
+  - Uses preference-aware exercise selection when the user has recorded what he enjoys.
+- Expanded the exercise/body schema in `backend/db/schema.py`.
+  - Added richer `exercise_profile` fields:
+    - `minimum_session_min`, `optimal_session_min`, `schedule_days_json`, `barriers_json`, `enjoyment_json`, `preferred_location`, `preferred_split`, `primary_goal`, `height_cm`, `training_history_notes`
+  - Added `exercise_equipment_items` for separate home/gym inventory.
+  - Added `body_measurement_snapshots` for repeated anthropometric tracking.
+  - Extended workout sessions and exercise logs with:
+    - location context
+    - duration
+    - session RPE
+    - fallback usage
+    - volume/hard-set summaries
+    - best-set fields
+  - Personal records now capture metric type, estimated 1RM, session link, and notes.
+- Expanded the API and `Cuerpo` tab so the workout engine is usable end to end.
+  - Dashboard endpoint for current training state
+  - Plan-generation endpoint
+  - Equipment CRUD
+  - Measurement logging
+  - PR history
+  - Set-by-set workout logger with reps, load, RIR, RPE, failure flag, and completion flag
+- Integrated workout state into Nash's main reasoning context in `backend/agent/profile.py`.
+  - Nash now sees:
+    - body goal and fitness level
+    - weekly structure and minimum floor
+    - barriers and things the user enjoys
+    - adherence in the last 7/28 days
+    - latest measurements
+    - recent PRs and recent sessions
+    - today's suggested plan and rescue option
+- Updated `backend/agent/prompts.py` so Nash explicitly treats workout adherence like the product intends:
+  - protect the minimum viable session first;
+  - use the home fallback when gym friction appears;
+  - do **not** prescribe all-out failure on every exercise.
+- Upgraded exercise discovery in `backend/agent/module_discovery.py`.
+  - Discovery now extracts the richer exercise profile fields and frames the minimum plan as a success case rather than a consolation prize.
+- Added UI guardrails in `frontend/src/components/tabs/Cuerpo.tsx`.
+  - Invalid numeric inputs are rejected before save.
+  - Measurements now show the actual site-by-site protocol in the interface.
+
+### Why This Should Help
+- The workout engine now matches the user's actual psychology:
+  - **consistency first**
+  - **minimum viable action as a win**
+  - **fallback over self-blame**
+- It also matches current hypertrophy evidence better:
+  - training to failure is **not required** for growth in general;
+  - frequency can be chosen largely by preference when weekly volume is handled;
+  - meaningful progress can come from modest, time-efficient resistance training;
+  - home-based resistance work is viable when equipment and progression are handled intelligently.
+- Measurements are now standardized enough to detect change without turning the app into a laboratory. That gives Nash better signal for physique progress, especially when scale weight alone is ambiguous.
+
+### Decisions Recorded
+- **We did not center the engine on failure.**
+  - Compounds default to roughly `1-3 RIR`.
+  - Safer isolation work can move closer to failure when technique is still clean.
+  - Reason: current meta-analytic evidence does not support "failure everywhere" as necessary for hypertrophy, and it would likely hurt adherence.
+- **We chose an adherence-first deterministic planner instead of an LLM-only workout generator.**
+  - Reason: the minimum floor, fallback logic, progression summaries, and equipment constraints need predictable behavior every day.
+- **We chose repeated circumference + weight tracking rather than scale-only tracking.**
+  - Reason: muscle gain and recomposition can be missed if we only watch bodyweight.
+
+### Risks / Watchouts
+- The planner is intentionally conservative. It is better at keeping the user in the game than at maximizing short-term training novelty.
+- Enjoyment/barrier adaptation is keyword-driven for now; it is useful, but not yet a full behavioral model.
+- Calendar auto-scheduling and nutrition-driven workout adjustments are still partial:
+  - the workout engine already bridges to protein progress;
+  - true calendar automation remains a later phase.
+- Measurement quality still depends on consistent self-measurement technique.
+
+### Validation
+- Backend compile:
+  - `./.venv/bin/python -m py_compile backend/db/schema.py backend/exercise_engine.py backend/main.py backend/agent/profile.py backend/agent/module_discovery.py backend/agent/prompts.py backend/llm.py` ✅
+- Frontend build:
+  - `npm run build` ✅
+- Workout-context smoke test:
+  - `build_profile_context(...)` produced a valid context after `init_db_sync()` ✅
+- Workout-plan smoke test:
+  - `generate_workout_plan()` returned a primary session and home fallback session ✅
+- OpenAI provider initialization check:
+  - `get_chat_model(...)` initialized successfully using the local `NASH_OPENAI_API_KEY` ✅
+
+### Files Modified
+- `backend/db/schema.py`
+- `backend/exercise_engine.py`
+- `backend/main.py`
+- `backend/agent/profile.py`
+- `backend/agent/module_discovery.py`
+- `backend/agent/prompts.py`
+- `frontend/src/api.ts`
+- `frontend/src/components/tabs/Cuerpo.tsx`
+- `nash_life_manager_plan.md`
+- `docs/phase5_body_finance_research.md`
+- `CONTEXT_HANDOFF.md`
+- `docs/CHANGELOG.md`
+
 ## 2026-07-25: OpenAI Reasoning Migration + Privacy Boundary + Finance Context Reset
 
 ### Problem Statement

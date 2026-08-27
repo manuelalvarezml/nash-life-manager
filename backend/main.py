@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 
 from backend.config import AUDIO_DIR, ensure_dirs
+from backend.exercise_engine import build_exercise_dashboard, generate_workout_plan
 from backend.db.schema import (
     apply_profile_summary_updates,
     init_db_sync,
@@ -59,10 +60,16 @@ from backend.db.schema import (
     get_nutrition_daily_totals,
     get_exercise_profile,
     upsert_exercise_profile,
+    list_exercise_equipment,
+    insert_exercise_equipment,
+    delete_exercise_equipment,
+    get_body_measurement_snapshots,
+    insert_body_measurement_snapshot,
     get_workout_templates,
     insert_workout_template,
     insert_workout_session,
     get_workout_sessions,
+    get_personal_records,
     get_finance_profile,
     upsert_finance_profile,
     get_expense_categories,
@@ -1407,6 +1414,88 @@ async def update_exercise_profile_endpoint(updates: dict):
     return {"ok": True, "profile": profile}
 
 
+@app.get("/api/exercise/dashboard")
+async def get_exercise_dashboard_endpoint():
+    """Get the full workout engine dashboard."""
+    dashboard = await asyncio.to_thread(build_exercise_dashboard)
+    return dashboard
+
+
+@app.post("/api/exercise/plan")
+async def generate_exercise_plan_endpoint(body: dict):
+    """Generate an adherence-first workout plan."""
+    plan = await asyncio.to_thread(
+        generate_workout_plan,
+        location=body.get("location"),
+        energy_level=body.get("energy_level"),
+        available_time_min=body.get("available_time_min"),
+        desired_mode=body.get("desired_mode"),
+    )
+    return {"ok": True, "plan": plan}
+
+
+@app.get("/api/exercise/equipment")
+async def list_exercise_equipment_endpoint(location: str = None):
+    """List exercise equipment by location."""
+    items = await asyncio.to_thread(list_exercise_equipment, location)
+    return {"items": items}
+
+
+@app.post("/api/exercise/equipment")
+async def create_exercise_equipment_endpoint(body: dict):
+    """Create an equipment item."""
+    location = (body.get("location") or "").strip()
+    category = (body.get("category") or "").strip()
+    label = (body.get("label") or "").strip()
+    if location not in {"home", "gym"}:
+        return {"ok": False, "error": "location must be home or gym"}
+    if not category:
+        return {"ok": False, "error": "category is required"}
+    if not label:
+        return {"ok": False, "error": "label is required"}
+
+    item_id = await asyncio.to_thread(
+        insert_exercise_equipment,
+        location=location,
+        category=category,
+        label=label,
+        max_load_kg=body.get("max_load_kg"),
+        quantity=body.get("quantity"),
+        notes=body.get("notes"),
+    )
+    items = await asyncio.to_thread(list_exercise_equipment, location)
+    created = next((item for item in items if item.get("id") == item_id), None)
+    return {"ok": True, "item": created}
+
+
+@app.delete("/api/exercise/equipment/{item_id}")
+async def delete_exercise_equipment_endpoint(item_id: int):
+    """Remove an equipment item."""
+    await asyncio.to_thread(delete_exercise_equipment, item_id)
+    return {"ok": True}
+
+
+@app.get("/api/exercise/measurements")
+async def list_exercise_measurements_endpoint(limit: int = 12):
+    """List body measurement snapshots."""
+    measurements = await asyncio.to_thread(get_body_measurement_snapshots, limit)
+    return {"measurements": measurements}
+
+
+@app.post("/api/exercise/measurements")
+async def create_exercise_measurement_endpoint(body: dict):
+    """Create a body measurement snapshot."""
+    snapshot = await asyncio.to_thread(insert_body_measurement_snapshot, body)
+    return {"ok": True, "measurement": snapshot}
+
+
+@app.get("/api/exercise/records")
+async def list_exercise_records_endpoint(limit: int = 20):
+    """List recent exercise personal records."""
+    records = await asyncio.to_thread(get_personal_records, limit)
+    return {"records": records}
+
+
 @app.get("/api/exercise/templates")
 async def list_exercise_templates(level: str = None):
     """List workout templates."""
@@ -1456,6 +1545,13 @@ async def create_exercise_session(body: dict):
     if level not in {"minimum", "optimal"}:
         return {"ok": False, "error": "level must be minimum or optimal"}
 
+    actual_location = body.get("actual_location")
+    planned_location = body.get("planned_location")
+    if actual_location not in {None, "home", "gym"}:
+        return {"ok": False, "error": "actual_location must be home or gym"}
+    if planned_location not in {None, "home", "gym"}:
+        return {"ok": False, "error": "planned_location must be home or gym"}
+
     date = body.get("date") or datetime.now().strftime("%Y-%m-%d")
     session_id = await asyncio.to_thread(
         insert_workout_session,
@@ -1465,23 +1561,18 @@ async def create_exercise_session(body: dict):
         exercises_json=json.dumps(body.get("exercises")) if isinstance(body.get("exercises"), list) else body.get("exercises_json"),
         notes=body.get("notes"),
         energy_level=body.get("energy_level"),
+        focus_code=body.get("focus_code"),
+        planned_location=planned_location,
+        actual_location=actual_location,
+        duration_min=body.get("duration_min"),
+        session_rpe=body.get("session_rpe"),
+        fallback_used=bool(body.get("fallback_used")),
+        plan_source=body.get("plan_source"),
+        completed=body.get("completed"),
+        exercise_logs=body.get("exercise_logs") if isinstance(body.get("exercise_logs"), list) else None,
     )
-
-    db = await get_db()
-    rows = await db.execute_fetchall(
-        """SELECT ws.*, wt.name as template_name
-           FROM workout_sessions ws
-           LEFT JOIN workout_templates wt ON wt.id = ws.template_id
-           WHERE ws.id = ?""",
-        (session_id,),
-    )
-    await db.close()
-    created = dict(rows[0]) if rows else None
-    if created and created.get("exercises_json"):
-        try:
-            created["exercises"] = json.loads(created["exercises_json"])
-        except json.JSONDecodeError:
-            created["exercises"] = []
+    sessions = await asyncio.to_thread(get_workout_sessions, 20)
+    created = next((session for session in sessions if session.get("id") == session_id), None)
     return {"ok": True, "session": created}
 
 

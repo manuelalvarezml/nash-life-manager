@@ -904,18 +904,100 @@ export interface ExerciseProfile {
   equipment_json: string | null;
   workout_days_per_week: number | null;
   time_per_workout_min: number | null;
+  minimum_session_min: number | null;
+  optimal_session_min: number | null;
   goals_json: string | null;
   limitations_json: string | null;
+  schedule_days_json: string | null;
+  barriers_json: string | null;
+  enjoyment_json: string | null;
   has_gym_access: number | null;
   gym_start_date: string | null;
   mobility_focus: number | null;
+  preferred_location: 'home' | 'gym' | 'either' | null;
+  preferred_split: 'auto' | 'full_body' | 'upper_lower' | null;
+  primary_goal: 'muscle_gain' | 'strength' | 'recomposition' | 'general_fitness' | null;
+  height_cm: number | null;
+  training_history_notes: string | null;
   notes: string | null;
   discovery_session_id: number | null;
   created_at: string;
   updated_at: string;
   equipment?: string[];
+  equipment_categories?: string[];
+  equipment_items?: ExerciseEquipmentItem[];
   goals?: string[];
   limitations?: string[];
+  schedule_days?: string[];
+  barriers?: string[];
+  enjoyment?: string[];
+}
+
+export interface ExerciseEquipmentItem {
+  id: number;
+  location: 'home' | 'gym';
+  category: string;
+  label: string;
+  max_load_kg: number | null;
+  quantity: number | null;
+  notes: string | null;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BodyMeasurementSnapshot {
+  id: number;
+  taken_on: string;
+  weight_kg: number | null;
+  waist_cm: number | null;
+  hip_cm: number | null;
+  chest_cm: number | null;
+  arm_relaxed_cm: number | null;
+  arm_flexed_cm: number | null;
+  thigh_cm: number | null;
+  calf_cm: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface ExerciseSetLog {
+  reps: number | null;
+  weight_kg: number;
+  rir: number | null;
+  rpe: number | null;
+  reached_failure: boolean;
+  completed: boolean;
+  notes?: string | null;
+}
+
+export interface ExerciseLogEntry {
+  id?: number;
+  session_id?: number;
+  exercise_name: string;
+  movement_pattern?: string | null;
+  equipment_context?: string | null;
+  location?: 'home' | 'gym' | null;
+  volume_load?: number | null;
+  hard_sets?: number | null;
+  best_set_weight_kg?: number | null;
+  best_set_reps?: number | null;
+  notes?: string | null;
+  is_personal_record?: number;
+  sets_json?: string;
+  sets: ExerciseSetLog[];
+}
+
+export interface PersonalRecord {
+  id: number;
+  exercise_name: string;
+  weight_kg: number;
+  reps: number;
+  metric_type: 'estimated_1rm' | 'load_reps' | 'repetition';
+  estimated_1rm: number | null;
+  session_id: number | null;
+  notes: string | null;
+  achieved_at: string;
 }
 
 export interface WorkoutTemplate {
@@ -936,12 +1018,124 @@ export interface WorkoutSession {
   level: 'minimum' | 'optimal';
   template_id: number | null;
   template_name: string | null;
+  focus_code: string | null;
+  planned_location: 'home' | 'gym' | null;
+  actual_location: 'home' | 'gym' | null;
+  duration_min: number | null;
   exercises_json: string | null;
   notes: string | null;
   energy_level: number | null;
+  session_rpe: number | null;
+  fallback_used: number;
+  plan_source: 'manual' | 'generated' | 'template';
   completed: number;
   created_at: string;
   exercises: Array<Record<string, unknown>>;
+  exercise_logs: ExerciseLogEntry[];
+}
+
+export interface WorkoutPlanExercise {
+  name: string;
+  movement_pattern: string;
+  equipment_context: string;
+  exercise_type: string;
+  sets: number;
+  rep_range: string;
+  rest_sec: number;
+  rir_target: string;
+  failure_guidance: string;
+  coaching: string;
+  progression_tip: string;
+  last_performance?: {
+    date?: string;
+    level?: string;
+    location?: string;
+    best_set?: {
+      reps: number;
+      weight_kg: number;
+      rir?: number | null;
+      reached_failure?: boolean;
+    } | null;
+  } | null;
+}
+
+export interface WorkoutPlanSession {
+  name: string;
+  level: 'minimum' | 'optimal';
+  location: 'home' | 'gym';
+  focus_code: string;
+  goal: string;
+  estimated_duration_min: number;
+  warmup: string[];
+  guidance: string[];
+  exercises: WorkoutPlanExercise[];
+  extra_energy_enabled: boolean;
+}
+
+export interface WorkoutPlan {
+  generated_at: string;
+  input: {
+    location: 'home' | 'gym';
+    energy_level: number;
+    available_time_min: number;
+    desired_mode: 'minimum' | 'optimal' | 'auto' | string;
+  };
+  training_target: {
+    primary_goal: string;
+    weekly_sessions_target: number;
+    minimum_sessions_floor: number;
+    hard_sets_goal_per_muscle: string;
+    phase: 'foundation' | 'build';
+  };
+  primary_session: WorkoutPlanSession;
+  fallback_session: WorkoutPlanSession;
+  weekly_outline: Array<{
+    day: string;
+    session: string;
+    location: string;
+    focus_code: string;
+  }>;
+  adherence: {
+    last_7_days: Record<string, unknown>;
+    last_28_days: Record<string, unknown>;
+  };
+  nutrition_bridge: {
+    protein_today_g: number;
+    protein_target_g: number;
+    protein_progress_pct: number | null;
+  };
+  notes: string[];
+}
+
+export interface MeasurementProtocol {
+  recommended: boolean;
+  why: string[];
+  timing: {
+    baseline: string;
+    frequency: string;
+    best_moment: string;
+  };
+  rules: string[];
+  sites: Array<{
+    code: string;
+    label: string;
+    how: string;
+    source_note: string;
+  }>;
+}
+
+export interface ExerciseDashboard {
+  profile: ExerciseProfile | null;
+  equipment: ExerciseEquipmentItem[];
+  measurements: BodyMeasurementSnapshot[];
+  latest_measurement: BodyMeasurementSnapshot | null;
+  measurement_change: Record<string, number>;
+  records: PersonalRecord[];
+  recent_sessions: WorkoutSession[];
+  adherence_7: Record<string, unknown>;
+  adherence_28: Record<string, unknown>;
+  measurement_protocol: MeasurementProtocol;
+  today_plan: WorkoutPlan;
 }
 
 export async function fetchExerciseProfile(): Promise<{
@@ -959,6 +1153,82 @@ export async function updateExerciseProfile(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
   });
+  return res.json();
+}
+
+export async function fetchExerciseDashboard(): Promise<ExerciseDashboard> {
+  const res = await fetch(`${API_BASE}/exercise/dashboard`);
+  return res.json();
+}
+
+export async function generateWorkoutPlan(input: {
+  location?: 'home' | 'gym';
+  energy_level?: number;
+  available_time_min?: number;
+  desired_mode?: 'minimum' | 'optimal' | 'auto';
+}): Promise<{ ok: boolean; plan: WorkoutPlan }> {
+  const res = await fetch(`${API_BASE}/exercise/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
+export async function fetchExerciseEquipment(location?: 'home' | 'gym'): Promise<{
+  items: ExerciseEquipmentItem[];
+}> {
+  const query = location ? `?location=${location}` : '';
+  const res = await fetch(`${API_BASE}/exercise/equipment${query}`);
+  return res.json();
+}
+
+export async function createExerciseEquipment(input: {
+  location: 'home' | 'gym';
+  category: string;
+  label: string;
+  max_load_kg?: number;
+  quantity?: number;
+  notes?: string;
+}): Promise<{ ok: boolean; item?: ExerciseEquipmentItem; error?: string }> {
+  const res = await fetch(`${API_BASE}/exercise/equipment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
+export async function deleteExerciseEquipment(id: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/exercise/equipment/${id}`, {
+    method: 'DELETE',
+  });
+  return res.json();
+}
+
+export async function fetchExerciseMeasurements(limit: number = 12): Promise<{
+  measurements: BodyMeasurementSnapshot[];
+}> {
+  const res = await fetch(`${API_BASE}/exercise/measurements?limit=${limit}`);
+  return res.json();
+}
+
+export async function createExerciseMeasurement(input: Partial<BodyMeasurementSnapshot>): Promise<{
+  ok: boolean;
+  measurement?: BodyMeasurementSnapshot;
+}> {
+  const res = await fetch(`${API_BASE}/exercise/measurements`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
+export async function fetchExerciseRecords(limit: number = 20): Promise<{
+  records: PersonalRecord[];
+}> {
+  const res = await fetch(`${API_BASE}/exercise/records?limit=${limit}`);
   return res.json();
 }
 
@@ -996,9 +1266,18 @@ export async function createWorkoutSession(input: {
   date?: string;
   level: 'minimum' | 'optimal';
   template_id?: number;
+  focus_code?: string;
+  planned_location?: 'home' | 'gym';
+  actual_location?: 'home' | 'gym';
+  duration_min?: number;
   exercises?: Array<Record<string, unknown>>;
   notes?: string;
   energy_level?: number;
+  session_rpe?: number;
+  fallback_used?: boolean;
+  plan_source?: 'manual' | 'generated' | 'template';
+  completed?: number;
+  exercise_logs?: ExerciseLogEntry[];
 }): Promise<{ ok: boolean; session?: WorkoutSession; error?: string }> {
   const res = await fetch(`${API_BASE}/exercise/sessions`, {
     method: 'POST',

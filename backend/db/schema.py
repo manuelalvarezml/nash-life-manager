@@ -1,5 +1,7 @@
 import json
 import sqlite3
+from datetime import datetime, timedelta
+
 import aiosqlite
 from backend.config import DB_PATH
 
@@ -275,16 +277,44 @@ CREATE TABLE IF NOT EXISTS exercise_profile (
     equipment_json TEXT DEFAULT '[]',      -- ["dumbbells", "bands", "pullup_bar"]
     workout_days_per_week INTEGER DEFAULT 3,
     time_per_workout_min INTEGER DEFAULT 45,
+    minimum_session_min INTEGER DEFAULT 12,
+    optimal_session_min INTEGER DEFAULT 45,
     goals_json TEXT DEFAULT '[]',          -- ["muscle_gain", "mobility", "strength"]
     limitations_json TEXT DEFAULT '[]',    -- injuries, conditions
+    schedule_days_json TEXT DEFAULT '[]',
+    barriers_json TEXT DEFAULT '[]',
+    enjoyment_json TEXT DEFAULT '[]',
     has_gym_access INTEGER DEFAULT 0,
     gym_start_date TEXT,
     mobility_focus INTEGER DEFAULT 1,      -- desk/bed lifestyle needs this
+    preferred_location TEXT DEFAULT 'either'
+        CHECK (preferred_location IN ('home', 'gym', 'either')),
+    preferred_split TEXT DEFAULT 'auto'
+        CHECK (preferred_split IN ('auto', 'full_body', 'upper_lower')),
+    primary_goal TEXT DEFAULT 'muscle_gain'
+        CHECK (primary_goal IN ('muscle_gain', 'strength', 'recomposition', 'general_fitness')),
+    height_cm REAL,
+    training_history_notes TEXT,
     notes TEXT,
     discovery_session_id INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS exercise_equipment_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    location TEXT NOT NULL CHECK (location IN ('home', 'gym')),
+    category TEXT NOT NULL,
+    label TEXT NOT NULL,
+    max_load_kg REAL,
+    quantity INTEGER DEFAULT 1,
+    notes TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_exercise_equipment_location ON exercise_equipment_items(location);
 
 -- Workout templates (generated or custom)
 CREATE TABLE IF NOT EXISTS workout_templates (
@@ -304,11 +334,18 @@ CREATE TABLE IF NOT EXISTS workout_sessions (
     date TEXT NOT NULL,
     template_id INTEGER REFERENCES workout_templates(id),
     level TEXT NOT NULL CHECK (level IN ('minimum', 'optimal')),
+    focus_code TEXT,
+    planned_location TEXT CHECK (planned_location IN ('home', 'gym')),
+    actual_location TEXT CHECK (actual_location IN ('home', 'gym')),
     started_at TEXT,
     ended_at TEXT,
+    duration_min INTEGER,
     exercises_json TEXT,                   -- Actual exercises performed
     notes TEXT,
     energy_level INTEGER CHECK (energy_level BETWEEN 1 AND 10),
+    session_rpe INTEGER CHECK (session_rpe BETWEEN 1 AND 10),
+    fallback_used INTEGER DEFAULT 0,
+    plan_source TEXT DEFAULT 'manual' CHECK (plan_source IN ('manual', 'generated', 'template')),
     completed INTEGER DEFAULT 0
 );
 
@@ -320,6 +357,13 @@ CREATE TABLE IF NOT EXISTS exercise_logs (
     session_id INTEGER REFERENCES workout_sessions(id),
     exercise_name TEXT NOT NULL,
     sets_json TEXT NOT NULL,               -- [{reps, weight_kg, rpe}]
+    movement_pattern TEXT,
+    equipment_context TEXT,
+    location TEXT CHECK (location IN ('home', 'gym')),
+    volume_load REAL,
+    hard_sets INTEGER,
+    best_set_weight_kg REAL,
+    best_set_reps INTEGER,
     notes TEXT,
     is_personal_record INTEGER DEFAULT 0
 );
@@ -330,10 +374,32 @@ CREATE TABLE IF NOT EXISTS personal_records (
     exercise_name TEXT NOT NULL,
     weight_kg REAL NOT NULL,
     reps INTEGER NOT NULL,
+    metric_type TEXT DEFAULT 'estimated_1rm'
+        CHECK (metric_type IN ('estimated_1rm', 'load_reps', 'repetition')),
+    estimated_1rm REAL,
+    session_id INTEGER REFERENCES workout_sessions(id),
+    notes TEXT,
     achieved_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_personal_records_exercise ON personal_records(exercise_name);
+
+CREATE TABLE IF NOT EXISTS body_measurement_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    taken_on TEXT NOT NULL,
+    weight_kg REAL,
+    waist_cm REAL,
+    hip_cm REAL,
+    chest_cm REAL,
+    arm_relaxed_cm REAL,
+    arm_flexed_cm REAL,
+    thigh_cm REAL,
+    calf_cm REAL,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_body_measurements_taken_on ON body_measurement_snapshots(taken_on);
 
 -- Finance profile (from discovery conversation)
 CREATE TABLE IF NOT EXISTS finance_profile (
@@ -499,6 +565,7 @@ def init_db_sync():
     conn.executescript(SCHEMA_SQL)
     _migrate_diary_columns(conn)
     _migrate_goals_columns(conn)
+    _migrate_body_module(conn)
     _seed_profile_domains(conn)
     _seed_life_domains(conn)
     _seed_expense_categories(conn)
@@ -579,6 +646,102 @@ def _migrate_goals_columns(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_goals_node_type ON goals(node_type)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_goal_relations_source ON goal_relations(source_goal_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_goal_relations_target ON goal_relations(target_goal_id)")
+
+
+def _migrate_body_module(conn: sqlite3.Connection):
+    profile_cols = {row[1] for row in conn.execute("PRAGMA table_info(exercise_profile)").fetchall()}
+    profile_defaults = {
+        "minimum_session_min": "INTEGER DEFAULT 12",
+        "optimal_session_min": "INTEGER DEFAULT 45",
+        "schedule_days_json": "TEXT DEFAULT '[]'",
+        "barriers_json": "TEXT DEFAULT '[]'",
+        "enjoyment_json": "TEXT DEFAULT '[]'",
+        "preferred_location": "TEXT DEFAULT 'either' CHECK (preferred_location IN ('home', 'gym', 'either'))",
+        "preferred_split": "TEXT DEFAULT 'auto' CHECK (preferred_split IN ('auto', 'full_body', 'upper_lower'))",
+        "primary_goal": "TEXT DEFAULT 'muscle_gain' CHECK (primary_goal IN ('muscle_gain', 'strength', 'recomposition', 'general_fitness'))",
+        "height_cm": "REAL",
+        "training_history_notes": "TEXT",
+    }
+    for column, definition in profile_defaults.items():
+        if column not in profile_cols:
+            conn.execute(f"ALTER TABLE exercise_profile ADD COLUMN {column} {definition}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS exercise_equipment_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            location TEXT NOT NULL CHECK (location IN ('home', 'gym')),
+            category TEXT NOT NULL,
+            label TEXT NOT NULL,
+            max_load_kg REAL,
+            quantity INTEGER DEFAULT 1,
+            notes TEXT,
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_exercise_equipment_location ON exercise_equipment_items(location)")
+
+    session_cols = {row[1] for row in conn.execute("PRAGMA table_info(workout_sessions)").fetchall()}
+    session_defaults = {
+        "focus_code": "TEXT",
+        "planned_location": "TEXT CHECK (planned_location IN ('home', 'gym'))",
+        "actual_location": "TEXT CHECK (actual_location IN ('home', 'gym'))",
+        "duration_min": "INTEGER",
+        "session_rpe": "INTEGER CHECK (session_rpe BETWEEN 1 AND 10)",
+        "fallback_used": "INTEGER DEFAULT 0",
+        "plan_source": "TEXT DEFAULT 'manual' CHECK (plan_source IN ('manual', 'generated', 'template'))",
+    }
+    for column, definition in session_defaults.items():
+        if column not in session_cols:
+            conn.execute(f"ALTER TABLE workout_sessions ADD COLUMN {column} {definition}")
+
+    log_cols = {row[1] for row in conn.execute("PRAGMA table_info(exercise_logs)").fetchall()}
+    log_defaults = {
+        "movement_pattern": "TEXT",
+        "equipment_context": "TEXT",
+        "location": "TEXT CHECK (location IN ('home', 'gym'))",
+        "volume_load": "REAL",
+        "hard_sets": "INTEGER",
+        "best_set_weight_kg": "REAL",
+        "best_set_reps": "INTEGER",
+    }
+    for column, definition in log_defaults.items():
+        if column not in log_cols:
+            conn.execute(f"ALTER TABLE exercise_logs ADD COLUMN {column} {definition}")
+
+    pr_cols = {row[1] for row in conn.execute("PRAGMA table_info(personal_records)").fetchall()}
+    pr_defaults = {
+        "metric_type": "TEXT DEFAULT 'estimated_1rm' CHECK (metric_type IN ('estimated_1rm', 'load_reps', 'repetition'))",
+        "estimated_1rm": "REAL",
+        "session_id": "INTEGER REFERENCES workout_sessions(id)",
+        "notes": "TEXT",
+    }
+    for column, definition in pr_defaults.items():
+        if column not in pr_cols:
+            conn.execute(f"ALTER TABLE personal_records ADD COLUMN {column} {definition}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS body_measurement_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            taken_on TEXT NOT NULL,
+            weight_kg REAL,
+            waist_cm REAL,
+            hip_cm REAL,
+            chest_cm REAL,
+            arm_relaxed_cm REAL,
+            arm_flexed_cm REAL,
+            thigh_cm REAL,
+            calf_cm REAL,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_body_measurements_taken_on ON body_measurement_snapshots(taken_on)")
 
 
 def _rebuild_goals_table(conn: sqlite3.Connection, existing_cols: set[str]):
@@ -2657,17 +2820,277 @@ def get_nutrition_daily_totals(date: str | None = None) -> dict:
 # Exercise helpers
 # =============================================
 
+def _parse_json_list(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _normalize_set_entry(entry: dict) -> dict:
+    reps = entry.get('reps')
+    weight_kg = entry.get('weight_kg')
+    rir = entry.get('rir')
+    rpe = entry.get('rpe')
+
+    try:
+        reps = int(reps) if reps not in (None, '') else None
+    except (TypeError, ValueError):
+        reps = None
+
+    try:
+        weight_kg = float(weight_kg) if weight_kg not in (None, '') else 0.0
+    except (TypeError, ValueError):
+        weight_kg = 0.0
+
+    try:
+        rir = int(rir) if rir not in (None, '') else None
+    except (TypeError, ValueError):
+        rir = None
+
+    try:
+        rpe = int(rpe) if rpe not in (None, '') else None
+    except (TypeError, ValueError):
+        rpe = None
+
+    return {
+        'reps': reps,
+        'weight_kg': weight_kg,
+        'rir': rir,
+        'rpe': rpe,
+        'reached_failure': bool(entry.get('reached_failure')),
+        'completed': bool(entry.get('completed', reps not in (None, 0))),
+        'notes': (entry.get('notes') or '').strip() or None,
+    }
+
+
+def _estimate_1rm(weight_kg: float, reps: int) -> float | None:
+    if weight_kg <= 0 or reps <= 0:
+        return None
+    if reps > 12:
+        return None
+    return round(weight_kg * (1 + reps / 30.0), 2)
+
+
+def _summarize_sets(sets: list[dict]) -> dict:
+    volume_load = 0.0
+    hard_sets = 0
+    best_weight = 0.0
+    best_reps = 0
+    best_estimated_1rm = 0.0
+
+    for raw_set in sets:
+        if not isinstance(raw_set, dict):
+            continue
+        set_entry = _normalize_set_entry(raw_set)
+        reps = set_entry['reps'] or 0
+        weight_kg = set_entry['weight_kg'] or 0.0
+        volume_load += reps * weight_kg
+        if reps > 0 and (
+            set_entry['reached_failure']
+            or set_entry['rir'] is None
+            or (set_entry['rir'] is not None and set_entry['rir'] <= 3)
+            or (set_entry['rpe'] is not None and set_entry['rpe'] >= 7)
+        ):
+            hard_sets += 1
+        if weight_kg > best_weight or (weight_kg == best_weight and reps > best_reps):
+            best_weight = weight_kg
+            best_reps = reps
+        estimated = _estimate_1rm(weight_kg, reps)
+        if estimated and estimated > best_estimated_1rm:
+            best_estimated_1rm = estimated
+
+    return {
+        'volume_load': round(volume_load, 2),
+        'hard_sets': hard_sets,
+        'best_set_weight_kg': round(best_weight, 2) if best_weight else 0.0,
+        'best_set_reps': best_reps,
+        'estimated_1rm': round(best_estimated_1rm, 2) if best_estimated_1rm else None,
+    }
+
+
+def _maybe_insert_personal_record(
+    conn: sqlite3.Connection,
+    *,
+    session_id: int,
+    exercise_name: str,
+    best_weight_kg: float,
+    best_reps: int,
+    estimated_1rm: float | None,
+    notes: str | None,
+) -> bool:
+    previous = conn.execute(
+        """
+        SELECT * FROM personal_records
+        WHERE exercise_name = ?
+        ORDER BY COALESCE(estimated_1rm, 0) DESC, weight_kg DESC, reps DESC, achieved_at DESC
+        LIMIT 1
+        """,
+        (exercise_name,),
+    ).fetchone()
+
+    prev_estimated = float(previous['estimated_1rm'] or 0) if previous else 0.0
+    prev_weight = float(previous['weight_kg'] or 0) if previous else 0.0
+    prev_reps = int(previous['reps'] or 0) if previous else 0
+
+    is_pr = False
+    metric_type = 'estimated_1rm'
+
+    if estimated_1rm and estimated_1rm > prev_estimated + 0.5:
+        is_pr = True
+        metric_type = 'estimated_1rm'
+    elif best_weight_kg > prev_weight or (best_weight_kg == prev_weight and best_reps > prev_reps):
+        is_pr = True
+        metric_type = 'repetition' if best_weight_kg <= 0 else 'load_reps'
+
+    if not is_pr:
+        return False
+
+    conn.execute(
+        """
+        INSERT INTO personal_records (exercise_name, weight_kg, reps, metric_type, estimated_1rm, session_id, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            exercise_name,
+            best_weight_kg,
+            best_reps,
+            metric_type,
+            estimated_1rm,
+            session_id,
+            notes,
+        ),
+    )
+    return True
+
+
+def list_exercise_equipment(location: str | None = None, active_only: bool = True) -> list[dict]:
+    """List registered exercise equipment."""
+    conn = _get_sync_conn()
+    query = "SELECT * FROM exercise_equipment_items"
+    clauses = []
+    params: list = []
+    if location:
+        clauses.append("location = ?")
+        params.append(location)
+    if active_only:
+        clauses.append("is_active = 1")
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY location, category, label"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def insert_exercise_equipment(
+    *,
+    location: str,
+    category: str,
+    label: str,
+    max_load_kg: float | None = None,
+    quantity: int | None = None,
+    notes: str | None = None,
+) -> int:
+    """Insert a new equipment item."""
+    conn = _get_sync_conn()
+    cursor = conn.execute(
+        """
+        INSERT INTO exercise_equipment_items (location, category, label, max_load_kg, quantity, notes)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            location,
+            category.strip(),
+            label.strip(),
+            max_load_kg,
+            quantity or 1,
+            notes,
+        ),
+    )
+    item_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return item_id
+
+
+def delete_exercise_equipment(item_id: int) -> None:
+    """Soft-delete an equipment item."""
+    conn = _get_sync_conn()
+    conn.execute(
+        "UPDATE exercise_equipment_items SET is_active = 0, updated_at = datetime('now') WHERE id = ?",
+        (item_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_body_measurement_snapshots(limit: int = 12) -> list[dict]:
+    """Get measurement snapshots, newest first."""
+    conn = _get_sync_conn()
+    rows = conn.execute(
+        """
+        SELECT * FROM body_measurement_snapshots
+        ORDER BY taken_on DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_latest_body_measurement_snapshot() -> dict | None:
+    snapshots = get_body_measurement_snapshots(limit=1)
+    return snapshots[0] if snapshots else None
+
+
+def insert_body_measurement_snapshot(data: dict) -> dict:
+    """Insert a body measurement snapshot and return it."""
+    conn = _get_sync_conn()
+    allowed = {
+        'taken_on', 'weight_kg', 'waist_cm', 'hip_cm', 'chest_cm',
+        'arm_relaxed_cm', 'arm_flexed_cm', 'thigh_cm', 'calf_cm', 'notes',
+    }
+    filtered = {k: v for k, v in data.items() if k in allowed}
+    if 'taken_on' not in filtered or not filtered['taken_on']:
+        filtered['taken_on'] = datetime.now().strftime("%Y-%m-%d")
+    cols = ", ".join(filtered.keys())
+    placeholders = ", ".join("?" for _ in filtered)
+    cursor = conn.execute(
+        f"INSERT INTO body_measurement_snapshots ({cols}) VALUES ({placeholders})",
+        list(filtered.values()),
+    )
+    snapshot_id = cursor.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM body_measurement_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
 def get_exercise_profile() -> dict | None:
     """Get the exercise profile."""
-    import json
     conn = _get_sync_conn()
     row = conn.execute("SELECT * FROM exercise_profile LIMIT 1").fetchone()
     conn.close()
     if row:
         result = dict(row)
-        result['equipment'] = json.loads(result.get('equipment_json') or '[]')
-        result['goals'] = json.loads(result.get('goals_json') or '[]')
-        result['limitations'] = json.loads(result.get('limitations_json') or '[]')
+        result['equipment'] = _parse_json_list(result.get('equipment_json'))
+        result['goals'] = _parse_json_list(result.get('goals_json'))
+        result['limitations'] = _parse_json_list(result.get('limitations_json'))
+        result['schedule_days'] = _parse_json_list(result.get('schedule_days_json'))
+        result['barriers'] = _parse_json_list(result.get('barriers_json'))
+        result['enjoyment'] = _parse_json_list(result.get('enjoyment_json'))
+        equipment_items = list_exercise_equipment()
+        result['equipment_items'] = equipment_items
+        if equipment_items:
+            equipment_labels = [item['label'] for item in equipment_items]
+            equipment_categories = [item['category'] for item in equipment_items]
+            result['equipment'] = list(dict.fromkeys(result['equipment'] + equipment_labels))
+            result['equipment_categories'] = list(dict.fromkeys(equipment_categories))
         return result
     return None
 
@@ -2680,7 +3103,10 @@ def upsert_exercise_profile(data: dict) -> dict:
     allowed = {
         'fitness_level', 'equipment_json', 'workout_days_per_week', 'time_per_workout_min',
         'goals_json', 'limitations_json', 'has_gym_access', 'gym_start_date',
-        'mobility_focus', 'notes', 'discovery_session_id'
+        'mobility_focus', 'notes', 'discovery_session_id', 'minimum_session_min',
+        'optimal_session_min', 'schedule_days_json', 'barriers_json', 'enjoyment_json',
+        'preferred_location', 'preferred_split', 'primary_goal', 'height_cm',
+        'training_history_notes'
     }
     filtered = {k: v for k, v in data.items() if k in allowed}
 
@@ -2709,7 +3135,6 @@ def upsert_exercise_profile(data: dict) -> dict:
 
 def get_workout_templates(level: str | None = None) -> list[dict]:
     """Get workout templates."""
-    import json
     conn = _get_sync_conn()
     if level:
         rows = conn.execute(
@@ -2725,7 +3150,7 @@ def get_workout_templates(level: str | None = None) -> list[dict]:
     result = []
     for r in rows:
         d = dict(r)
-        d['exercises'] = json.loads(d.get('exercises_json') or '[]')
+        d['exercises'] = _parse_json_list(d.get('exercises_json'))
         result.append(d)
     return result
 
@@ -2756,14 +3181,115 @@ def insert_workout_session(
     exercises_json: str | None = None,
     notes: str | None = None,
     energy_level: int | None = None,
+    focus_code: str | None = None,
+    planned_location: str | None = None,
+    actual_location: str | None = None,
+    duration_min: int | None = None,
+    session_rpe: int | None = None,
+    fallback_used: bool = False,
+    plan_source: str | None = None,
+    completed: int | None = None,
+    exercise_logs: list[dict] | None = None,
 ) -> int:
     """Insert a workout session."""
     conn = _get_sync_conn()
+    completed_value = (
+        completed
+        if completed is not None
+        else (1 if exercise_logs or exercises_json else 0)
+    )
     cursor = conn.execute("""
-        INSERT INTO workout_sessions (date, level, template_id, exercises_json, notes, energy_level)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (date, level, template_id, exercises_json, notes, energy_level))
+        INSERT INTO workout_sessions (
+            date, level, template_id, focus_code, planned_location, actual_location,
+            exercises_json, notes, energy_level, duration_min, session_rpe,
+            fallback_used, plan_source, completed
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        date,
+        level,
+        template_id,
+        focus_code,
+        planned_location,
+        actual_location,
+        exercises_json,
+        notes,
+        energy_level,
+        duration_min,
+        session_rpe,
+        1 if fallback_used else 0,
+        plan_source or 'manual',
+        completed_value,
+    ))
     session_id = cursor.lastrowid
+
+    if exercise_logs:
+        rendered_exercises: list[dict] = []
+        for raw_log in exercise_logs:
+            exercise_name = (raw_log.get('exercise_name') or '').strip()
+            if not exercise_name:
+                continue
+            raw_sets = raw_log.get('sets') or []
+            if isinstance(raw_sets, str):
+                try:
+                    raw_sets = json.loads(raw_sets)
+                except json.JSONDecodeError:
+                    raw_sets = []
+            normalized_sets = [
+                _normalize_set_entry(item)
+                for item in raw_sets
+                if isinstance(item, dict)
+            ]
+            summary = _summarize_sets(normalized_sets)
+            is_pr = _maybe_insert_personal_record(
+                conn,
+                session_id=session_id,
+                exercise_name=exercise_name,
+                best_weight_kg=summary['best_set_weight_kg'],
+                best_reps=summary['best_set_reps'],
+                estimated_1rm=summary['estimated_1rm'],
+                notes=raw_log.get('notes'),
+            )
+            conn.execute(
+                """
+                INSERT INTO exercise_logs (
+                    session_id, exercise_name, sets_json, movement_pattern, equipment_context,
+                    location, volume_load, hard_sets, best_set_weight_kg, best_set_reps,
+                    notes, is_personal_record
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    exercise_name,
+                    json.dumps(normalized_sets, ensure_ascii=False),
+                    raw_log.get('movement_pattern'),
+                    raw_log.get('equipment_context'),
+                    raw_log.get('location') or actual_location or planned_location,
+                    summary['volume_load'],
+                    summary['hard_sets'],
+                    summary['best_set_weight_kg'],
+                    summary['best_set_reps'],
+                    raw_log.get('notes'),
+                    1 if is_pr else 0,
+                ),
+            )
+            rendered_exercises.append(
+                {
+                    'name': exercise_name,
+                    'movement_pattern': raw_log.get('movement_pattern'),
+                    'equipment_context': raw_log.get('equipment_context'),
+                    'sets': normalized_sets,
+                    'notes': raw_log.get('notes'),
+                }
+            )
+
+        if rendered_exercises and not exercises_json:
+            conn.execute(
+                "UPDATE workout_sessions SET exercises_json = ? WHERE id = ?",
+                (json.dumps(rendered_exercises, ensure_ascii=False), session_id),
+            )
+
     conn.commit()
     conn.close()
     return session_id
@@ -2771,7 +3297,6 @@ def insert_workout_session(
 
 def get_workout_sessions(limit: int = 30) -> list[dict]:
     """Get recent workout sessions."""
-    import json
     conn = _get_sync_conn()
     rows = conn.execute("""
         SELECT ws.*, wt.name as template_name
@@ -2779,14 +3304,117 @@ def get_workout_sessions(limit: int = 30) -> list[dict]:
         LEFT JOIN workout_templates wt ON wt.id = ws.template_id
         ORDER BY ws.date DESC LIMIT ?
     """, (limit,)).fetchall()
+    session_ids = [row['id'] for row in rows]
+    log_map: dict[int, list[dict]] = {}
+    if session_ids:
+        placeholders = ", ".join("?" for _ in session_ids)
+        log_rows = conn.execute(
+            f"""
+            SELECT * FROM exercise_logs
+            WHERE session_id IN ({placeholders})
+            ORDER BY id
+            """,
+            session_ids,
+        ).fetchall()
+        for row in log_rows:
+            item = dict(row)
+            item['sets'] = _parse_json_list(item.get('sets_json'))
+            log_map.setdefault(item['session_id'], []).append(item)
     conn.close()
 
     result = []
     for r in rows:
         d = dict(r)
-        d['exercises'] = json.loads(d.get('exercises_json') or '[]')
+        d['exercises'] = _parse_json_list(d.get('exercises_json'))
+        d['exercise_logs'] = log_map.get(d['id'], [])
         result.append(d)
     return result
+
+
+def get_exercise_logs(limit: int = 50, exercise_name: str | None = None) -> list[dict]:
+    """Get detailed exercise logs."""
+    conn = _get_sync_conn()
+    query = """
+        SELECT el.*, ws.date, ws.level, ws.actual_location, ws.focus_code
+        FROM exercise_logs el
+        LEFT JOIN workout_sessions ws ON ws.id = el.session_id
+    """
+    params: list = []
+    if exercise_name:
+        query += " WHERE el.exercise_name = ?"
+        params.append(exercise_name)
+    query += " ORDER BY ws.date DESC, el.id DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+
+    result = []
+    for row in rows:
+        item = dict(row)
+        item['sets'] = _parse_json_list(item.get('sets_json'))
+        result.append(item)
+    return result
+
+
+def get_personal_records(limit: int = 20) -> list[dict]:
+    """Get recent personal records."""
+    conn = _get_sync_conn()
+    rows = conn.execute(
+        """
+        SELECT * FROM personal_records
+        ORDER BY achieved_at DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_workout_adherence_summary(days: int = 28) -> dict:
+    """Get recent workout adherence counts."""
+    since = (datetime.now() - timedelta(days=max(days - 1, 0))).strftime("%Y-%m-%d")
+    conn = _get_sync_conn()
+    rows = conn.execute(
+        """
+        SELECT level, COUNT(*) as count
+        FROM workout_sessions
+        WHERE date >= ? AND completed = 1
+        GROUP BY level
+        """,
+        (since,),
+    ).fetchall()
+    total = conn.execute(
+        """
+        SELECT COUNT(*) as count
+        FROM workout_sessions
+        WHERE date >= ? AND completed = 1
+        """,
+        (since,),
+    ).fetchone()
+    last_session = conn.execute(
+        """
+        SELECT date, level, actual_location, focus_code
+        FROM workout_sessions
+        WHERE completed = 1
+        ORDER BY date DESC, id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    conn.close()
+
+    counts = {'minimum': 0, 'optimal': 0}
+    for row in rows:
+        counts[row['level']] = row['count']
+
+    return {
+        'days': days,
+        'since': since,
+        'total_sessions': total['count'] if total else 0,
+        'minimum_sessions': counts['minimum'],
+        'optimal_sessions': counts['optimal'],
+        'last_session': dict(last_session) if last_session else None,
+    }
 
 
 # =============================================

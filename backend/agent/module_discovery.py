@@ -85,7 +85,7 @@ Responde SIEMPRE en español. Se conciso pero amable.
 EXERCISE_DISCOVERY_PROMPT = """\
 Eres Nash en MODO DESCUBRIMIENTO DE EJERCICIO. Tu objetivo es entender el nivel de fitness de la persona usuaria, su equipamiento, limitaciones, y diseñar rutinas apropiadas.
 
-CONTEXTO DE MANUEL:
+CONTEXTO DE LA PERSONA USUARIA:
 {profile_context}
 
 PERFIL DE EJERCICIO ACTUAL:
@@ -96,13 +96,19 @@ HISTORIAL DE CONVERSACION:
 
 INFORMACION QUE NECESITAS RECOPILAR:
 1. Nivel de fitness (principiante/intermedio/avanzado)
-2. Equipamiento disponible (casa + gym pronto)
-3. Dias disponibles por semana para entrenar
-4. Tiempo disponible por sesion
-5. Metas especificas (masa muscular, movilidad, fuerza)
-6. Lesiones o limitaciones
-7. Problemas de movilidad (vida sedentaria en escritorio/cama)
-8. Historia de entrenamiento previo
+2. Objetivo principal realista (masa muscular, fuerza, recomposicion o fitness general)
+3. Equipamiento disponible separado por casa y gym
+4. Dias realistas por semana para entrenar
+5. Tiempo minimo que si puede cumplir y tiempo optimo
+6. Metas especificas (masa muscular, movilidad, fuerza)
+7. Lesiones o limitaciones
+8. Problemas de movilidad (vida sedentaria en escritorio/cama)
+9. Barreras de adherencia (pereza, ansiedad, tiempo, aburrimiento, etc.)
+10. Que si disfruta entrenando
+11. Dias preferidos para entrenar
+12. Lugar preferido (casa, gym, flexible)
+13. Historia de entrenamiento previo
+14. Altura en cm si la sabe
 
 SISTEMA DE DOS NIVELES:
 - MINIMO: Para dias de baja motivacion (10-15 min, movilidad + movimientos basicos)
@@ -116,21 +122,31 @@ La persona usuaria mencionó que:
 
 METODOLOGIA:
 - Haz preguntas naturales, una a la vez
+- Trata el plan minimo como exito real, no como castigo
 - Considera que necesita rutinas para casa ahora y gym despues
 - Enfatiza movilidad dado su estilo de vida sedentario
-- Recomienda ejercicios compuestos para eficiencia
+- Recomienda ejercicios compuestos para eficiencia y adherencia
+- No asumas que tiene que entrenar a fallo en todo; prioriza tecnica, constancia y disfrute
 
 EXTRACCION DE DATOS:
 [EJERCICIO_DATA]
 nivel: beginner|intermediate|advanced
+objetivo_principal: muscle_gain|strength|recomposition|general_fitness
 equipamiento: lista separada por comas
 dias_por_semana: numero
-minutos_por_sesion: numero
+minutos_minimos: numero
+minutos_optimos: numero
+altura_cm: numero (opcional)
 metas: lista separada por comas
 limitaciones: lista separada por comas
+barreras: lista separada por comas
+disfruta: lista separada por comas
+dias_preferidos: lista separada por comas
 tiene_gym: 0 o 1
 fecha_gym: YYYY-MM-DD (opcional)
-enfoque_movilidad: 1
+lugar_preferido: home|gym|either
+historia_entrenamiento: texto libre
+enfoque_movilidad: 0 o 1
 notas: texto libre
 [/EJERCICIO_DATA]
 
@@ -191,6 +207,17 @@ MODULE_PROMPTS = {
 }
 
 
+def _split_csvish(value) -> list[str]:
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = value.split(',')
+    else:
+        items = []
+
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
 def _get_current_profile(module: str) -> str:
     """Get current profile for a module."""
     if module == 'nutrition':
@@ -208,9 +235,14 @@ Comidas/dia: {profile.get('meals_per_day') or '?'}"""
         if not profile:
             return "No hay perfil de ejercicio configurado todavia."
         return f"""Nivel: {profile.get('fitness_level') or '?'}
+Objetivo principal: {profile.get('primary_goal') or '?'}
 Equipamiento: {profile.get('equipment') or []}
 Dias/semana: {profile.get('workout_days_per_week') or '?'}
-Min/sesion: {profile.get('time_per_workout_min') or '?'}
+Minimo util: {profile.get('minimum_session_min') or '?'}
+Tiempo optimo: {profile.get('optimal_session_min') or profile.get('time_per_workout_min') or '?'}
+Lugar preferido: {profile.get('preferred_location') or '?'}
+Barreras: {profile.get('barriers') or []}
+Disfrute: {profile.get('enjoyment') or []}
 Tiene gym: {'Si' if profile.get('has_gym_access') else 'No'}"""
 
     elif module == 'finance':
@@ -322,16 +354,27 @@ def _save_extracted_data(module: str, data: dict, session_id: int) -> dict:
         return upsert_nutrition_profile({k: v for k, v in profile_data.items() if v is not None})
 
     elif module == 'exercise':
+        minimum_minutes = data.get('minutos_minimos')
+        optimal_minutes = data.get('minutos_optimos') or data.get('minutos_por_sesion')
         profile_data = {
             'fitness_level': data.get('nivel'),
-            'equipment_json': json.dumps(data.get('equipamiento', '').split(',') if isinstance(data.get('equipamiento'), str) else []),
+            'primary_goal': data.get('objetivo_principal'),
+            'equipment_json': json.dumps(_split_csvish(data.get('equipamiento'))),
             'workout_days_per_week': data.get('dias_por_semana'),
-            'time_per_workout_min': data.get('minutos_por_sesion'),
-            'goals_json': json.dumps(data.get('metas', '').split(',') if isinstance(data.get('metas'), str) else []),
-            'limitations_json': json.dumps(data.get('limitaciones', '').split(',') if isinstance(data.get('limitaciones'), str) else []),
+            'minimum_session_min': minimum_minutes,
+            'optimal_session_min': optimal_minutes,
+            'time_per_workout_min': optimal_minutes,
+            'height_cm': data.get('altura_cm'),
+            'goals_json': json.dumps(_split_csvish(data.get('metas'))),
+            'limitations_json': json.dumps(_split_csvish(data.get('limitaciones'))),
+            'barriers_json': json.dumps(_split_csvish(data.get('barreras'))),
+            'enjoyment_json': json.dumps(_split_csvish(data.get('disfruta'))),
+            'schedule_days_json': json.dumps(_split_csvish(data.get('dias_preferidos'))),
+            'preferred_location': data.get('lugar_preferido'),
             'has_gym_access': data.get('tiene_gym'),
             'gym_start_date': data.get('fecha_gym'),
             'mobility_focus': data.get('enfoque_movilidad'),
+            'training_history_notes': data.get('historia_entrenamiento'),
             'notes': data.get('notas'),
             'discovery_session_id': session_id,
         }

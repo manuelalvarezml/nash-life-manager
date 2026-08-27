@@ -72,8 +72,11 @@ todos:
   - id: phase5-body
     content: "Phase 5: Body (V1) — nutrition + workout tabs, discovery, and basic tracking flows"
     status: completed
+  - id: phase5-body-workout-engine
+    content: "Phase 5: Workout engine (V2) — adherence-first plan generator, fallback rescue session, measurement protocol, PRs, equipment inventory, and agent-context integration"
+    status: completed
   - id: phase5-body-iteration
-    content: "Phase 5: Body iteration — nutrition audio parsing/estimation, default workout templates, PR tracking"
+    content: "Phase 5: Body iteration — nutrition audio parsing/estimation, calendar coordination, and deeper cross-engine adaptation between workouts, nutrition, and daily-entry patterns"
     status: pending
   - id: phase6-finance
     content: "Phase 6: Finance (V1) — finance tab, discovery, expense logging, monthly summary"
@@ -114,6 +117,7 @@ isProject: true
 - **Privacy boundary:** Before remote LLM calls, outbound profile context, prompts, and user text are pseudonymized. By default the user's name is replaced with **`Antonio`**, while partner names, locations, emails, phone numbers, URLs, and long identifiers are generalized or masked. Local UI/storage restores the user-facing name so Nash does not start calling him Antonio in-app.
 - **Finance priority:** The financial engine is now the highest-value module after daily entries. Nash's core agent context now includes income, debt snapshot, fixed expenses, recent expenses, and monthly category totals so advice can connect money patterns with emotional patterns.
 - **Next finance step:** ingest monthly **credit card / loan PDFs**, group spending automatically, extract interest rates and debt structure, and compare repayment options (card payoff, loan refinance, asset sale such as the camera, etc.).
+- **Workout engine reset (Aug 27, 2026):** the Body module now uses an **adherence-first hypertrophy engine**. Nash generates a primary session plus a rescue fallback, tracks PRs and repeated body measurements, and avoids the old trap of treating "minimum" as failure.
 
 ## Current implementation (Jul 2026)
 
@@ -136,7 +140,7 @@ isProject: true
 | **Sobre Mi** | Biographical profile editor — 11 sections (identity, family, career, values, life story, etc.), completeness tracking, auto-save |
 | **UI Theme** | Vivid light palette: brick orange, teal, wine purple, prussian blue |
 | **Metas Tab** | Wheel of Life domains (8), domain rating modal, goals list with filters, create/update/delete goals, progress tracking, self-concordance fields, **Goal Discovery** (conversation + floating graph + relation editing), hierarchy (`parent_goal_id`) + explicit relation edges |
-| **Cuerpo + Dinero (V1)** | Backend endpoints for nutrition/exercise/finance + module discovery sessions; frontend tabs with quick forms (food log, workout session, expense log), profile summaries, and recent activity lists |
+| **Cuerpo + Dinero** | Nutrition tracking plus **Workout Engine V2** (adherence-first primary/fallback sessions, equipment inventory, measurements, PRs, set logging) and Finance V1 (discovery, expenses, monthly summary) |
 
 ### When does "Lo que Nash sabe" fill in?
 
@@ -162,6 +166,37 @@ isProject: true
 4. ~~**QuestionEngine** — daily questions + `asked_questions` / `daily_question_answers`.~~ **DONE**
 5. **QuestionEngine UX/perf** — improve "Generar ahora" latency messaging and optionally cache/retry strategy. **DEFERRED** (revisit after Phase 5-6, acceptable for now)
 6. **Hypothesis confidence, self-compassion hooks, question strategy adaptation** — pending.
+
+### Phase 5 update - Workout Engine V2 (Aug 27, 2026)
+
+**Problem:** the original exercise module could log workouts, but it could not yet function like a real life-companion training engine. It did not know enough about minimum viable adherence, rescue sessions, barriers, enjoyment, measurements, or recent training history to coach the user well.
+
+**What is now shipped:**
+- deterministic workout engine in `backend/exercise_engine.py`
+- minimum vs optimal session selection based on time/energy
+- home and gym full-body A/B structures
+- guaranteed home fallback session
+- equipment inventory by location
+- body-measurement protocol and measurement snapshots
+- set-by-set logging with reps, load, RIR, RPE, failure, and PR detection
+- workout state injected into Nash's main profile context
+- richer exercise discovery fields:
+  - barriers
+  - enjoyment
+  - preferred days
+  - preferred location
+  - minimum and optimal session length
+  - training history
+
+**Design decisions:**
+- We are optimizing for **adherence first**, then volume progression.
+- We are **not** using failure as the central prescription.
+- We are using repeated circumference + weight tracking because scale-only tracking is not enough for muscle gain.
+
+**Immediate next Body work:**
+- nutrition audio parsing + macro estimation
+- stronger coordination with calendar
+- tighter feedback loops between diary-based emotional patterns and training adjustments
 
 > **Decision (Apr 2026):** Proceeding to Phase 4 research while Phase 2 items 5-6 are deferred. The 20-40s question generation latency is acceptable for personal use. Will revisit UX polish after implementing more core features.
 
